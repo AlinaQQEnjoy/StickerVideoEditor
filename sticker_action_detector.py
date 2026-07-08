@@ -43,12 +43,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roi", default="0,0,1,1", help="x,y,w,h. 0..1 values are relative.")
     parser.add_argument("--analysis-fps", type=float, default=12.0)
     parser.add_argument("--max-actions", type=int, default=80)
-    parser.add_argument("--min-action-gap", type=float, default=1.2)
+    parser.add_argument("--min-action-gap", type=float, default=0.35)
     parser.add_argument("--peel-duration", type=float, default=1.0)
+    parser.add_argument("--repeat-peel-duration", type=float, default=2.0)
     parser.add_argument("--peel-before", type=float, default=0.35)
     parser.add_argument("--release-duration", type=float, default=0.8)
     parser.add_argument("--release-search-min", type=float, default=0.45)
     parser.add_argument("--release-search-max", type=float, default=3.2)
+    parser.add_argument(
+        "--same-sticker-gap",
+        type=float,
+        default=1.1,
+        help="Peel peaks within this gap are treated as retries of the same sticker.",
+    )
+    parser.add_argument(
+        "--repeat-peel-window",
+        type=float,
+        default=1.05,
+        help="If a sticker is peeled again within this window, keep a longer final clip.",
+    )
     parser.add_argument("--motion-threshold", type=float, default=1.4)
     parser.add_argument("--audio-threshold", type=float, default=2.4)
     parser.add_argument("--settle-threshold", type=float, default=0.25)
@@ -270,35 +283,74 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
             break
     selected.sort(key=lambda item: item[0])
 
+    groups = group_same_sticker_actions(selected, args.same_sticker_gap)
     segments: list[Segment] = []
-    for peak_t, score, note in selected:
+    for group in groups:
+        peak_t, score, note = group[-1]
+        repeated = has_quick_repeel(group, args.repeat_peel_window)
+        peel_duration = args.repeat_peel_duration if repeated else args.peel_duration
         peel_start = max(0.0, peak_t - args.peel_before)
-        peel_end = peel_start + args.peel_duration
         release_t, quiet_score = local_min_after(times, score_z, peak_t, args)
         release_start = max(0.0, release_t - 0.12)
         release_end = release_start + args.release_duration
-        segments.append(Segment("peel", peel_start, peel_end, peak_t, score, note))
-        segments.append(Segment("release", release_start, release_end, release_t, score - quiet_score * 0.2, "tweezer_leaves/settled_frame"))
-
-    return merge_overlaps(sorted(segments, key=lambda s: s.start))
-
-
-def merge_overlaps(segments: list[Segment]) -> list[Segment]:
-    merged: list[Segment] = []
-    for segment in segments:
-        if not merged or segment.start > merged[-1].end + 0.08:
-            merged.append(segment)
-            continue
-        last = merged[-1]
-        merged[-1] = Segment(
-            kind=last.kind + "+" + segment.kind,
-            start=last.start,
-            end=max(last.end, segment.end),
-            anchor=last.anchor if last.score >= segment.score else segment.anchor,
-            score=max(last.score, segment.score),
-            note=last.note + ";" + segment.note,
+        kind = "last_piece_extended" if repeated else "last_piece"
+        group_note = note
+        if repeated:
+            group_note += f";quick_repeel_kept_last_only;duration={peel_duration:.1f}s"
+        elif len(group) > 1:
+            group_note += ";same_sticker_retry_kept_last_only"
+        segments.append(
+            Segment(
+                kind,
+                peel_start,
+                max(peel_start + peel_duration, release_end),
+                release_t,
+                score - quiet_score * 0.2,
+                group_note,
+            )
         )
-    return merged
+
+    return keep_last_overlapping_segments(sorted(segments, key=lambda s: s.start))
+
+
+def group_same_sticker_actions(
+    actions: list[tuple[float, float, str]],
+    same_sticker_gap: float,
+) -> list[list[tuple[float, float, str]]]:
+    groups: list[list[tuple[float, float, str]]] = []
+    for action in actions:
+        if not groups or action[0] - groups[-1][-1][0] > same_sticker_gap:
+            groups.append([action])
+        else:
+            groups[-1].append(action)
+    return groups
+
+
+def has_quick_repeel(
+    actions: list[tuple[float, float, str]],
+    repeat_window: float,
+) -> bool:
+    return any(
+        actions[index + 1][0] - actions[index][0] <= repeat_window
+        for index in range(len(actions) - 1)
+    )
+
+
+def keep_last_overlapping_segments(segments: list[Segment]) -> list[Segment]:
+    kept: list[Segment] = []
+    for segment in segments:
+        if not kept or segment.start > kept[-1].end + 0.08:
+            kept.append(segment)
+            continue
+        kept[-1] = Segment(
+            kind=segment.kind,
+            start=segment.start,
+            end=segment.end,
+            anchor=segment.anchor,
+            score=segment.score,
+            note=segment.note + ";overlap_kept_last_only",
+        )
+    return kept
 
 
 def fmt_time(seconds: float) -> str:

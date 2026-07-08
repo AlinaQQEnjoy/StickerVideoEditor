@@ -8,10 +8,13 @@ param(
     [string]$Roi = "0,0,1,1",
     [double]$AnalysisFps = 12.0,
     [int]$MaxActions = 80,
-    [double]$MinActionGap = 1.2,
+    [double]$MinActionGap = 0.35,
     [double]$PeelDuration = 1.0,
+    [double]$RepeatPeelDuration = 2.0,
     [double]$PeelBefore = 0.35,
     [double]$ReleaseDuration = 0.8,
+    [double]$SameStickerGap = 1.1,
+    [double]$RepeatPeelWindow = 1.05,
     [double]$MotionThreshold = 1.4,
     [double]$AudioThreshold = 2.4,
     [switch]$DisableAudio
@@ -66,8 +69,11 @@ $detectorArgs = @(
     "--max-actions", $MaxActions,
     "--min-action-gap", $MinActionGap,
     "--peel-duration", $PeelDuration,
+    "--repeat-peel-duration", $RepeatPeelDuration,
     "--peel-before", $PeelBefore,
     "--release-duration", $ReleaseDuration,
+    "--same-sticker-gap", $SameStickerGap,
+    "--repeat-peel-window", $RepeatPeelWindow,
     "--motion-threshold", $MotionThreshold,
     "--audio-threshold", $AudioThreshold
 )

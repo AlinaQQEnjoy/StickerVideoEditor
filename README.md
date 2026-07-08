@@ -7,6 +7,9 @@ The current editing grammar keeps:
 
 - about 1 second around the sticker peel/lift moment
 - about 0.8 seconds when the sticker is placed and the tweezer leaves
+- if the same sticker is peeled again after about 1 second, keep a longer
+  2-second final clip
+- for retries of the same sticker, keep only the last clip
 
 ## Run The Review UI
 

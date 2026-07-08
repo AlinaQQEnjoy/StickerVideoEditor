@@ -33,6 +33,8 @@ class Segment:
     anchor: float
     score: float
     note: str
+    cx: float = 0.5
+    cy: float = 0.5
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,9 +55,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--same-sticker-gap",
         type=float,
-        default=1.1,
-        help="Peel peaks within this gap are treated as retries of the same sticker.",
+        default=1.75,
+        help="Peel peaks within this gap are merged into the final action cluster.",
     )
+    parser.add_argument(
+        "--same-sticker-retry-gap",
+        type=float,
+        default=2.0,
+        help="A non-extended clip followed within this gap is treated as a non-final retry.",
+    )
+    parser.add_argument("--same-sticker-distance", type=float, default=0.22)
+    parser.add_argument("--final-cluster-max-span", type=float, default=2.2)
     parser.add_argument(
         "--repeat-peel-window",
         type=float,
@@ -125,6 +135,8 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
     motion_scores: list[float] = []
     edge_scores: list[float] = []
     activity_scores: list[float] = []
+    center_xs: list[float] = []
+    center_ys: list[float] = []
     index = 0
 
     while True:
@@ -148,11 +160,21 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
             motion = float(np.percentile(mag, 94))
             edge_change = float(np.mean(edge_delta > 0))
             active_area = float(np.mean(mag > max(0.20, np.percentile(mag, 84))))
+            mask = mag > max(0.20, np.percentile(mag, 90))
+            if np.any(mask):
+                ys, xs = np.where(mask)
+                center_x = float(np.mean(xs) / max(1, mag.shape[1] - 1))
+                center_y = float(np.mean(ys) / max(1, mag.shape[0] - 1))
+            else:
+                center_x = 0.5
+                center_y = 0.5
 
             times.append(index / source_fps)
             motion_scores.append(motion)
             edge_scores.append(edge_change)
             activity_scores.append(active_area)
+            center_xs.append(center_x)
+            center_ys.append(center_y)
 
         prev_gray = gray
         prev_edges = edges
@@ -168,6 +190,8 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
         "motion": motion,
         "edge": edge,
         "activity": activity,
+        "center_x": np.asarray(center_xs, dtype=np.float32),
+        "center_y": np.asarray(center_ys, dtype=np.float32),
         "combined_z": smooth(combined.astype(np.float32), 1),
     }
 
@@ -249,7 +273,9 @@ def local_min_after(times: np.ndarray, score_z: np.ndarray, peak_t: float, args:
 def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray], args: argparse.Namespace) -> list[Segment]:
     times = visual["time"]
     score_z = visual["combined_z"]
-    candidates: list[tuple[float, float, str]] = []
+    center_x = visual["center_x"]
+    center_y = visual["center_y"]
+    candidates: list[tuple[float, float, str, float, float]] = []
 
     active = score_z >= args.motion_threshold
     ranges: list[tuple[int, int]] = []
@@ -272,7 +298,7 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
         note = "motion_peak"
         if audio_score >= args.audio_threshold:
             note = "motion_peak+scratch_audio"
-        candidates.append((t, score, note))
+        candidates.append((t, score, note, float(center_x[i]), float(center_y[i])))
 
     candidates.sort(key=lambda item: item[1], reverse=True)
     selected: list[tuple[float, float, str]] = []
@@ -286,19 +312,22 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
     groups = group_same_sticker_actions(selected, args.same_sticker_gap)
     segments: list[Segment] = []
     for group in groups:
-        peak_t, score, note = group[-1]
-        repeated = has_quick_repeel(group, args.repeat_peel_window)
+        final_cluster = final_action_cluster(group, args.same_sticker_gap, args.final_cluster_max_span)
+        repeated = has_quick_repeel(final_cluster, args.repeat_peel_window)
         peel_duration = args.repeat_peel_duration if repeated else args.peel_duration
-        peel_start = max(0.0, peak_t - args.peel_before)
-        release_t, quiet_score = local_min_after(times, score_z, peak_t, args)
+        first_peak_t = final_cluster[0][0]
+        peak_t, score, note, cx, cy = max(final_cluster, key=lambda item: item[1])
+        last_peak_t = final_cluster[-1][0]
+        peel_start = max(0.0, first_peak_t - args.peel_before)
+        release_t, quiet_score = local_min_after(times, score_z, last_peak_t, args)
         release_start = max(0.0, release_t - 0.12)
         release_end = release_start + args.release_duration
         kind = "last_piece_extended" if repeated else "last_piece"
         group_note = note
         if repeated:
             group_note += f";quick_repeel_kept_last_only;duration={peel_duration:.1f}s"
-        elif len(group) > 1:
-            group_note += ";same_sticker_retry_kept_last_only"
+        if len(final_cluster) > 1:
+            group_note += f";merged_final_cluster={len(final_cluster)}"
         segments.append(
             Segment(
                 kind,
@@ -307,17 +336,23 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
                 release_t,
                 score - quiet_score * 0.2,
                 group_note,
+                cx,
+                cy,
             )
         )
 
-    return keep_last_overlapping_segments(sorted(segments, key=lambda s: s.start))
+    return drop_non_final_retries(
+        keep_last_overlapping_segments(sorted(segments, key=lambda s: s.start)),
+        args.same_sticker_retry_gap,
+        args.same_sticker_distance,
+    )
 
 
 def group_same_sticker_actions(
-    actions: list[tuple[float, float, str]],
+    actions: list[tuple[float, float, str, float, float]],
     same_sticker_gap: float,
-) -> list[list[tuple[float, float, str]]]:
-    groups: list[list[tuple[float, float, str]]] = []
+) -> list[list[tuple[float, float, str, float, float]]]:
+    groups: list[list[tuple[float, float, str, float, float]]] = []
     for action in actions:
         if not groups or action[0] - groups[-1][-1][0] > same_sticker_gap:
             groups.append([action])
@@ -326,8 +361,23 @@ def group_same_sticker_actions(
     return groups
 
 
+def final_action_cluster(
+    actions: list[tuple[float, float, str, float, float]],
+    cluster_gap: float,
+    max_span: float,
+) -> list[tuple[float, float, str, float, float]]:
+    cluster = [actions[-1]]
+    for action in reversed(actions[:-1]):
+        if cluster[0][0] - action[0] > cluster_gap:
+            break
+        if cluster[-1][0] - action[0] > max_span:
+            break
+        cluster.insert(0, action)
+    return cluster
+
+
 def has_quick_repeel(
-    actions: list[tuple[float, float, str]],
+    actions: list[tuple[float, float, str, float, float]],
     repeat_window: float,
 ) -> bool:
     return any(
@@ -349,7 +399,32 @@ def keep_last_overlapping_segments(segments: list[Segment]) -> list[Segment]:
             anchor=segment.anchor,
             score=segment.score,
             note=segment.note + ";overlap_kept_last_only",
+            cx=segment.cx,
+            cy=segment.cy,
         )
+    return kept
+
+
+def segment_distance(a: Segment, b: Segment) -> float:
+    return math.hypot(a.cx - b.cx, a.cy - b.cy)
+
+
+def drop_non_final_retries(segments: list[Segment], retry_gap: float, max_distance: float) -> list[Segment]:
+    kept: list[Segment] = []
+    for index, segment in enumerate(segments):
+        next_segment = segments[index + 1] if index + 1 < len(segments) else None
+        close_next_gap = next_segment.start - segment.end if next_segment is not None else float("inf")
+        if (
+            next_segment is not None
+            and "extended" not in segment.kind
+            and segment_distance(segment, next_segment) <= max_distance
+            and (
+                close_next_gap <= 0.5
+                or ("merged_final_cluster" not in segment.note and close_next_gap <= retry_gap)
+            )
+        ):
+            continue
+        kept.append(segment)
     return kept
 
 
@@ -384,9 +459,15 @@ def write_outputs(out_dir: Path, visual: dict[str, np.ndarray], audio: dict[str,
 
     with (out_dir / "scores.csv").open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["time", "motion", "edge", "activity", "combined_z", "audio_z"])
-        for t, motion, edge, activity, combined in zip(
-            visual["time"], visual["motion"], visual["edge"], visual["activity"], visual["combined_z"]
+        writer.writerow(["time", "motion", "edge", "activity", "center_x", "center_y", "combined_z", "audio_z"])
+        for t, motion, edge, activity, cx, cy, combined in zip(
+            visual["time"],
+            visual["motion"],
+            visual["edge"],
+            visual["activity"],
+            visual["center_x"],
+            visual["center_y"],
+            visual["combined_z"],
         ):
             writer.writerow(
                 [
@@ -394,6 +475,8 @@ def write_outputs(out_dir: Path, visual: dict[str, np.ndarray], audio: dict[str,
                     f"{float(motion):.6f}",
                     f"{float(edge):.6f}",
                     f"{float(activity):.6f}",
+                    f"{float(cx):.3f}",
+                    f"{float(cy):.3f}",
                     f"{float(combined):.3f}",
                     f"{audio_near(audio, float(t) - 0.01, float(t) + 0.01):.3f}",
                 ]

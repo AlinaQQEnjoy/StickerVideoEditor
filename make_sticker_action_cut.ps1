@@ -13,7 +13,10 @@ param(
     [double]$RepeatPeelDuration = 2.0,
     [double]$PeelBefore = 0.35,
     [double]$ReleaseDuration = 0.8,
-    [double]$SameStickerGap = 1.1,
+    [double]$SameStickerGap = 1.75,
+    [double]$SameStickerRetryGap = 2.0,
+    [double]$SameStickerDistance = 0.22,
+    [double]$FinalClusterMaxSpan = 2.2,
     [double]$RepeatPeelWindow = 1.05,
     [double]$MotionThreshold = 1.4,
     [double]$AudioThreshold = 2.4,
@@ -22,6 +25,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $PSCommandPath
+$InvariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
+
+function Format-FfmpegSeconds {
+    param([double]$Seconds)
+    return $Seconds.ToString("0.000", $InvariantCulture)
+}
 
 function Resolve-CommandPath {
     param([string]$Command, [string]$Name)
@@ -73,6 +82,9 @@ $detectorArgs = @(
     "--peel-before", $PeelBefore,
     "--release-duration", $ReleaseDuration,
     "--same-sticker-gap", $SameStickerGap,
+    "--same-sticker-retry-gap", $SameStickerRetryGap,
+    "--same-sticker-distance", $SameStickerDistance,
+    "--final-cluster-max-span", $FinalClusterMaxSpan,
     "--repeat-peel-window", $RepeatPeelWindow,
     "--motion-threshold", $MotionThreshold,
     "--audio-threshold", $AudioThreshold
@@ -109,9 +121,9 @@ for ($i = 0; $i -lt $segments.Count; $i++) {
     $clipPath = Join-Path $clipsDir $clipName
 
     & $ffmpeg -hide_banner -loglevel error -y `
-        -ss ("{0:N3}" -f $start) `
+        -ss (Format-FfmpegSeconds $start) `
         -i $InputVideo `
-        -t ("{0:N3}" -f $duration) `
+        -t (Format-FfmpegSeconds $duration) `
         -c:v libx264 -preset veryfast -crf 20 `
         -c:a aac -b:a 160k `
         -movflags +faststart `

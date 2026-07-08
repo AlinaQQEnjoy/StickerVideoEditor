@@ -75,6 +75,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--motion-threshold", type=float, default=1.4)
     parser.add_argument("--audio-threshold", type=float, default=2.4)
     parser.add_argument("--settle-threshold", type=float, default=0.25)
+    parser.add_argument("--min-lift-range", type=float, default=0.12)
+    parser.add_argument("--max-lift-tail", type=float, default=0.04)
+    parser.add_argument("--late-lift-peak", type=float, default=0.52)
     parser.add_argument("--disable-audio", action="store_true")
     parser.add_argument("--keep-debug-audio", action="store_true")
     return parser.parse_args()
@@ -137,6 +140,7 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
     activity_scores: list[float] = []
     center_xs: list[float] = []
     center_ys: list[float] = []
+    lift_scores: list[float] = []
     index = 0
 
     while True:
@@ -148,8 +152,10 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
             continue
 
         crop = frame[top:bottom, left:right]
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, (360, 640), interpolation=cv2.INTER_AREA)
+        resized = cv2.resize(crop, (360, 640), interpolation=cv2.INTER_AREA)
+        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        lift_score = float(np.mean((hsv[..., 1] < 55) & (hsv[..., 2] > 175)))
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         edges = cv2.Canny(gray, 45, 135)
 
@@ -175,6 +181,7 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
             activity_scores.append(active_area)
             center_xs.append(center_x)
             center_ys.append(center_y)
+            lift_scores.append(lift_score)
 
         prev_gray = gray
         prev_edges = edges
@@ -192,6 +199,7 @@ def read_visual_scores(input_video: Path, roi_text: str, target_fps: float) -> d
         "activity": activity,
         "center_x": np.asarray(center_xs, dtype=np.float32),
         "center_y": np.asarray(center_ys, dtype=np.float32),
+        "lift": np.asarray(lift_scores, dtype=np.float32),
         "combined_z": smooth(combined.astype(np.float32), 1),
     }
 
@@ -341,10 +349,15 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
             )
         )
 
-    return drop_non_final_retries(
-        keep_last_overlapping_segments(sorted(segments, key=lambda s: s.start)),
-        args.same_sticker_retry_gap,
-        args.same_sticker_distance,
+    return confirm_peel_segments(
+        drop_non_final_retries(
+            keep_last_overlapping_segments(sorted(segments, key=lambda s: s.start)),
+            args.same_sticker_retry_gap,
+            args.same_sticker_distance,
+        ),
+        times,
+        visual["lift"],
+        args,
     )
 
 
@@ -428,6 +441,46 @@ def drop_non_final_retries(segments: list[Segment], retry_gap: float, max_distan
     return kept
 
 
+def confirm_peel_segments(
+    segments: list[Segment],
+    times: np.ndarray,
+    lift_scores: np.ndarray,
+    args: argparse.Namespace,
+) -> list[Segment]:
+    """Reject tweezer positioning that never develops into a visible peel.
+
+    A real peel produces a transient bright, low-saturation lifted surface.
+    It either clears before the clip ends or reaches its maximum late because
+    the sticker has only just detached.
+    """
+    confirmed: list[Segment] = []
+    for segment in segments:
+        mask = (times >= segment.start) & (times <= segment.end)
+        values = lift_scores[mask]
+        if values.size < 4:
+            continue
+
+        fifth = max(1, values.size // 5)
+        head = float(np.mean(values[:fifth]))
+        tail = float(np.mean(values[-fifth:]))
+        lift_range = float(np.max(values) - np.min(values))
+        peak_fraction = float(np.argmax(values) / max(1, values.size - 1))
+        tail_change = tail - head
+        confirmed_lift = (
+            lift_range >= args.min_lift_range
+            and (tail_change <= args.max_lift_tail or peak_fraction >= args.late_lift_peak)
+        )
+        if not confirmed_lift:
+            continue
+
+        segment.note += (
+            f";lift_confirmed={lift_range:.3f}"
+            f";lift_peak={peak_fraction:.2f}"
+        )
+        confirmed.append(segment)
+    return confirmed
+
+
 def fmt_time(seconds: float) -> str:
     ms_total = int(round(seconds * 1000))
     ms = ms_total % 1000
@@ -459,14 +512,15 @@ def write_outputs(out_dir: Path, visual: dict[str, np.ndarray], audio: dict[str,
 
     with (out_dir / "scores.csv").open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["time", "motion", "edge", "activity", "center_x", "center_y", "combined_z", "audio_z"])
-        for t, motion, edge, activity, cx, cy, combined in zip(
+        writer.writerow(["time", "motion", "edge", "activity", "center_x", "center_y", "lift", "combined_z", "audio_z"])
+        for t, motion, edge, activity, cx, cy, lift, combined in zip(
             visual["time"],
             visual["motion"],
             visual["edge"],
             visual["activity"],
             visual["center_x"],
             visual["center_y"],
+            visual["lift"],
             visual["combined_z"],
         ):
             writer.writerow(
@@ -477,6 +531,7 @@ def write_outputs(out_dir: Path, visual: dict[str, np.ndarray], audio: dict[str,
                     f"{float(activity):.6f}",
                     f"{float(cx):.3f}",
                     f"{float(cy):.3f}",
+                    f"{float(lift):.6f}",
                     f"{float(combined):.3f}",
                     f"{audio_near(audio, float(t) - 0.01, float(t) + 0.01):.3f}",
                 ]

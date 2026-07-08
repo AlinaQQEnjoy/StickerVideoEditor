@@ -20,6 +20,9 @@ param(
     [double]$RepeatPeelWindow = 1.05,
     [double]$MotionThreshold = 1.4,
     [double]$AudioThreshold = 2.4,
+    [double]$MinLiftRange = 0.12,
+    [double]$MaxLiftTail = 0.04,
+    [double]$LateLiftPeak = 0.52,
     [switch]$DisableAudio
 )
 
@@ -87,7 +90,10 @@ $detectorArgs = @(
     "--final-cluster-max-span", $FinalClusterMaxSpan,
     "--repeat-peel-window", $RepeatPeelWindow,
     "--motion-threshold", $MotionThreshold,
-    "--audio-threshold", $AudioThreshold
+    "--audio-threshold", $AudioThreshold,
+    "--min-lift-range", $MinLiftRange,
+    "--max-lift-tail", $MaxLiftTail,
+    "--late-lift-peak", $LateLiftPeak
 )
 
 if ($DisableAudio) {

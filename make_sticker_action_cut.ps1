@@ -145,3 +145,23 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Done."
 Write-Host "Final video: $FinalVideo"
 Write-Host "Segments: $segmentsPath"
+
+try {
+    $refreshPayload = @{
+        inputVideo = [System.IO.Path]::GetFullPath($InputVideo)
+        outputDir = [System.IO.Path]::GetFullPath($OutputDir)
+        finalVideo = [System.IO.Path]::GetFullPath($FinalVideo)
+    } | ConvertTo-Json -Compress
+
+    Invoke-RestMethod `
+        -Uri "http://127.0.0.1:8787/api/load-output" `
+        -Method Post `
+        -ContentType "application/json; charset=utf-8" `
+        -Body ([System.Text.Encoding]::UTF8.GetBytes($refreshPayload)) `
+        -TimeoutSec 5 | Out-Null
+
+    Write-Host "Review UI refreshed: http://127.0.0.1:8787"
+}
+catch {
+    Write-Warning "Could not refresh review UI at http://127.0.0.1:8787. Start sticker_review_server.py and refresh manually."
+}

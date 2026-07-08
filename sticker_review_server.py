@@ -78,6 +78,23 @@ def rel_url(path: Path) -> str:
     return "/file/" + urllib.parse.quote(rel.as_posix())
 
 
+def find_segment_clip(out_dir: Path, index: int) -> Path:
+    segment_clip = out_dir / "clips" / f"segment_{index:03d}.mp4"
+    if segment_clip.exists():
+        return segment_clip
+    matches = sorted((out_dir / "clips").glob(f"clip_{index:03d}_*.mp4"))
+    if matches:
+        return matches[0]
+    return segment_clip
+
+
+def find_segment_thumb(out_dir: Path, index: int) -> Path | None:
+    thumb = out_dir / "thumbs" / f"segment_{index:03d}.jpg"
+    if thumb.exists():
+        return thumb
+    return None
+
+
 def read_segments(out_dir: Path) -> list[dict[str, object]]:
     path = out_dir / "segments.csv"
     if not path.exists():
@@ -86,8 +103,8 @@ def read_segments(out_dir: Path) -> list[dict[str, object]]:
     with path.open("r", encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             index = int(row["index"])
-            clip = out_dir / "clips" / f"segment_{index:03d}.mp4"
-            thumb = out_dir / "thumbs" / f"segment_{index:03d}.jpg"
+            clip = find_segment_clip(out_dir, index)
+            thumb = find_segment_thumb(out_dir, index)
             items.append(
                 asdict(
                     SegmentItem(
@@ -100,7 +117,7 @@ def read_segments(out_dir: Path) -> list[dict[str, object]]:
                         score=row.get("score", ""),
                         note=row.get("note", ""),
                         clip=rel_url(clip),
-                        thumb=rel_url(thumb),
+                        thumb=rel_url(thumb) if thumb is not None else "",
                     )
                 )
             )
@@ -222,6 +239,29 @@ def analyze_worker(payload: dict[str, object]) -> None:
         set_state(busy=False, message="Analyze failed.", error=str(exc))
 
 
+def load_output(payload: dict[str, object]) -> dict[str, object]:
+    out_dir = Path(str(payload.get("outputDir", "")).strip().strip('"'))
+    if not out_dir.exists():
+        raise RuntimeError(f"Output folder not found: {out_dir}")
+    segments_path = out_dir / "segments.csv"
+    if not segments_path.exists():
+        raise RuntimeError(f"Segments file not found: {segments_path}")
+
+    input_video = str(payload.get("inputVideo") or "")
+    final_video = str(payload.get("finalVideo") or "")
+    segments = read_segments(out_dir)
+    set_state(
+        busy=False,
+        message=f"Loaded {len(segments)} clips from PowerShell run.",
+        inputVideo=input_video,
+        outputDir=str(out_dir),
+        segments=segments,
+        finalVideo=final_video,
+        error="",
+    )
+    return {"ok": True, "segments": len(segments)}
+
+
 def export_worker(payload: dict[str, object]) -> None:
     try:
         state = get_state()
@@ -239,7 +279,7 @@ def export_worker(payload: dict[str, object]) -> None:
         concat_path = out_dir / "selected_concat.txt"
         lines: list[str] = []
         for index in selected:
-            clip = (out_dir / "clips" / f"segment_{index:03d}.mp4").resolve()
+            clip = find_segment_clip(out_dir, index).resolve()
             if clip.exists():
                 safe = str(clip).replace("\\", "/").replace("'", "'\\''")
                 lines.append(f"file '{safe}'")
@@ -335,6 +375,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/export":
             threading.Thread(target=export_worker, args=(payload,), daemon=True).start()
             self.send_json({"ok": True})
+            return
+        if parsed.path == "/api/load-output":
+            try:
+                self.send_json(load_output(payload))
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
             return
         self.send_error(404)
 

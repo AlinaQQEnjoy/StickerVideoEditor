@@ -23,6 +23,9 @@ Open:
 http://127.0.0.1:8787
 ```
 
+When the PowerShell cutter finishes, it notifies the review UI automatically if
+the local server is running.
+
 ## Main Files
 
 - `sticker_action_detector.py`: OpenCV/audio detection for peel and release events.

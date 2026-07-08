@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sticker Action Review</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="topbar">
+      <div>
+        <h1>贴纸片段审核台</h1>
+        <p id="statusText">Ready.</p>
+      </div>
+      <div class="actions">
+        <button id="selectAllBtn" type="button">全选</button>
+        <button id="selectNoneBtn" type="button">清空</button>
+        <button id="exportBtn" type="button" class="primary">导出成品</button>
+      </div>
+    </section>
+
+    <section class="controls">
+      <label class="field wide">
+        <span>原视频路径</span>
+        <input id="inputVideo" value="D:\MellowScape\原视频\IMG_2038.MOV">
+      </label>
+      <label class="field">
+        <span>ROI</span>
+        <input id="roi" value="0,0,1,1">
+      </label>
+      <label class="field">
+        <span>动作阈值</span>
+        <input id="motionThreshold" type="number" value="1.4" step="0.1">
+      </label>
+      <label class="field">
+        <span>最多动作</span>
+        <input id="maxActions" type="number" value="80" step="1">
+      </label>
+      <label class="toggle">
+        <input id="disableAudio" type="checkbox">
+        <span>不用音频辅助</span>
+      </label>
+      <button id="analyzeBtn" type="button" class="primary">识别片段</button>
+    </section>
+
+    <section class="summary">
+      <div><strong id="countText">0</strong><span>片段</span></div>
+      <div><strong id="selectedText">0</strong><span>已选</span></div>
+      <div class="output" id="outputText"></div>
+    </section>
+
+    <section id="grid" class="grid"></section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

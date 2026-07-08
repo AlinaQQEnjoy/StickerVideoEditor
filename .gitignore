@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+review_output/
+sticker_action_output/
+auto_peel_output/
+auto_peel_output_cv/
+
+*.mp4
+*.mov
+*.MOV
+*.wav
+*.jpg
+*.jpeg
+*.png

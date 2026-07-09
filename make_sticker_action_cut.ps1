@@ -23,6 +23,7 @@ param(
     [double]$MinLiftRange = 0.12,
     [double]$MaxLiftTail = 0.04,
     [double]$LateLiftPeak = 0.52,
+    [switch]$ReuseAnalysis,
     [switch]$DisableAudio
 )
 
@@ -98,6 +99,9 @@ $detectorArgs = @(
 
 if ($DisableAudio) {
     $detectorArgs += "--disable-audio"
+}
+if ($ReuseAnalysis) {
+    $detectorArgs += "--reuse-analysis"
 }
 
 Write-Host "Detecting sticker peel/release edit points..."

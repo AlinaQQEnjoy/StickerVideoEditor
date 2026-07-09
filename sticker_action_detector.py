@@ -35,6 +35,7 @@ class Segment:
     note: str
     cx: float = 0.5
     cy: float = 0.5
+    evidence_start: float | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,6 +81,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--late-lift-peak", type=float, default=0.52)
     parser.add_argument("--disable-audio", action="store_true")
     parser.add_argument("--keep-debug-audio", action="store_true")
+    parser.add_argument(
+        "--reuse-analysis",
+        action="store_true",
+        help="Reuse scores.csv in the output directory instead of decoding the video again.",
+    )
     return parser.parse_args()
 
 
@@ -251,6 +257,33 @@ def read_audio_scores(wav_path: Path, hop_ms: float = 8.0) -> dict[str, np.ndarr
     return {"time": np.asarray(times, dtype=np.float32), "z": z.astype(np.float32)}
 
 
+def read_analysis_cache(path: Path) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    columns: dict[str, list[float]] = {}
+    with path.open("r", encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            for key, value in row.items():
+                columns.setdefault(key, []).append(float(value))
+
+    required = {"time", "motion", "edge", "activity", "center_x", "center_y", "lift", "combined_z", "audio_z"}
+    missing = required.difference(columns)
+    if missing:
+        raise SystemExit(f"Analysis cache is missing columns: {', '.join(sorted(missing))}")
+
+    arrays = {key: np.asarray(values, dtype=np.float32) for key, values in columns.items()}
+    visual = {
+        "time": arrays["time"],
+        "motion": arrays["motion"],
+        "edge": arrays["edge"],
+        "activity": arrays["activity"],
+        "center_x": arrays["center_x"],
+        "center_y": arrays["center_y"],
+        "lift": arrays["lift"],
+        "combined_z": arrays["combined_z"],
+    }
+    audio = {"time": arrays["time"], "z": arrays["audio_z"]}
+    return visual, audio
+
+
 def audio_near(audio: dict[str, np.ndarray], start: float, end: float) -> float:
     times = audio["time"]
     if times.size == 0:
@@ -323,10 +356,10 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
         final_cluster = final_action_cluster(group, args.same_sticker_gap, args.final_cluster_max_span)
         repeated = has_quick_repeel(final_cluster, args.repeat_peel_window)
         peel_duration = args.repeat_peel_duration if repeated else args.peel_duration
-        first_peak_t = final_cluster[0][0]
         peak_t, score, note, cx, cy = max(final_cluster, key=lambda item: item[1])
         last_peak_t = final_cluster[-1][0]
-        peel_start = max(0.0, first_peak_t - args.peel_before)
+        evidence_start = max(0.0, final_cluster[0][0] - args.peel_before)
+        peel_start = max(0.0, last_peak_t - args.peel_before)
         release_t, quiet_score = local_min_after(times, score_z, last_peak_t, args)
         release_start = max(0.0, release_t - 0.12)
         release_end = release_start + args.release_duration
@@ -346,6 +379,7 @@ def detect_segments(visual: dict[str, np.ndarray], audio: dict[str, np.ndarray],
                 group_note,
                 cx,
                 cy,
+                evidence_start,
             )
         )
 
@@ -414,6 +448,7 @@ def keep_last_overlapping_segments(segments: list[Segment]) -> list[Segment]:
             note=segment.note + ";overlap_kept_last_only",
             cx=segment.cx,
             cy=segment.cy,
+            evidence_start=segment.evidence_start,
         )
     return kept
 
@@ -455,7 +490,8 @@ def confirm_peel_segments(
     """
     confirmed: list[Segment] = []
     for segment in segments:
-        mask = (times >= segment.start) & (times <= segment.end)
+        evidence_start = segment.evidence_start if segment.evidence_start is not None else segment.start
+        mask = (times >= evidence_start) & (times <= segment.end)
         values = lift_scores[mask]
         if values.size < 4:
             continue
@@ -544,13 +580,19 @@ def main() -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    visual = read_visual_scores(input_video, args.roi, args.analysis_fps)
-    audio = {"time": np.asarray([], dtype=np.float32), "z": np.asarray([], dtype=np.float32)}
-    wav_path = out_dir / "_analysis_audio.wav"
-    if not args.disable_audio and extract_audio(args.ffmpeg, input_video, wav_path):
-        audio = read_audio_scores(wav_path)
-        if not args.keep_debug_audio:
-            wav_path.unlink(missing_ok=True)
+    scores_path = out_dir / "scores.csv"
+    if args.reuse_analysis:
+        if not scores_path.exists():
+            raise SystemExit(f"Analysis cache not found: {scores_path}")
+        visual, audio = read_analysis_cache(scores_path)
+    else:
+        visual = read_visual_scores(input_video, args.roi, args.analysis_fps)
+        audio = {"time": np.asarray([], dtype=np.float32), "z": np.asarray([], dtype=np.float32)}
+        wav_path = out_dir / "_analysis_audio.wav"
+        if not args.disable_audio and extract_audio(args.ffmpeg, input_video, wav_path):
+            audio = read_audio_scores(wav_path)
+            if not args.keep_debug_audio:
+                wav_path.unlink(missing_ok=True)
 
     segments = detect_segments(visual, audio, args)
     write_outputs(out_dir, visual, audio, segments)

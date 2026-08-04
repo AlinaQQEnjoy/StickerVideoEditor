@@ -1,6 +1,8 @@
 const state = {
   segments: [],
   busy: false,
+  page: 1,
+  pageSize: 24,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -9,33 +11,49 @@ function selectedIds() {
   return state.segments.filter((item) => item.selected).map((item) => item.index);
 }
 
+function pageCount() {
+  return Math.max(1, Math.ceil(state.segments.length / state.pageSize));
+}
+
+function visibleSegments() {
+  const start = (state.page - 1) * state.pageSize;
+  return state.segments.slice(start, start + state.pageSize);
+}
+
 function setBusy(isBusy) {
   state.busy = isBusy;
   $("analyzeBtn").disabled = isBusy;
   $("exportBtn").disabled = isBusy || selectedIds().length === 0;
+  $("prevPageBtn").disabled = isBusy || state.page <= 1;
+  $("nextPageBtn").disabled = isBusy || state.page >= pageCount();
 }
 
 function updateCounts() {
   $("countText").textContent = state.segments.length;
   $("selectedText").textContent = selectedIds().length;
+  $("pageText").textContent = `第 ${state.segments.length ? state.page : 0} / ${state.segments.length ? pageCount() : 0} 页`;
   $("exportBtn").disabled = state.busy || selectedIds().length === 0;
+  $("prevPageBtn").disabled = state.busy || state.page <= 1;
+  $("nextPageBtn").disabled = state.busy || state.page >= pageCount();
 }
 
 function renderGrid() {
   const grid = $("grid");
   grid.innerHTML = "";
-  state.segments.forEach((segment) => {
+  visibleSegments().forEach((segment) => {
     const card = document.createElement("article");
     card.className = `card${segment.selected ? " selected" : ""}`;
 
     const video = document.createElement("video");
     video.className = "preview";
     video.src = segment.clip;
-    video.poster = segment.thumb;
+    if (segment.thumb) {
+      video.poster = segment.thumb;
+    }
     video.controls = true;
     video.muted = true;
     video.playsInline = true;
-    video.preload = "metadata";
+    video.preload = "none";
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -84,16 +102,21 @@ async function postJson(url, payload) {
 }
 
 async function refreshState() {
-  const response = await fetch("/api/state");
+  const response = await fetch("/api/state", { cache: "no-store" });
   const data = await response.json();
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
   $("outputText").textContent = data.finalVideo ? `成品: ${data.finalVideo}` : `输出目录: ${data.outputDir || ""}`;
   setBusy(Boolean(data.busy));
 
   const incoming = data.segments || [];
-  if (JSON.stringify(incoming.map((x) => x.index)) !== JSON.stringify(state.segments.map((x) => x.index))) {
+  const incomingKey = JSON.stringify(incoming.map((x) => x.index));
+  const currentKey = JSON.stringify(state.segments.map((x) => x.index));
+  if (incomingKey !== currentKey) {
     state.segments = incoming.map((item) => ({ ...item, selected: item.selected !== false }));
+    state.page = 1;
     renderGrid();
+  } else {
+    updateCounts();
   }
 }
 
@@ -107,6 +130,7 @@ async function analyze() {
     maxPeaks: Number($("maxPeaks").value),
   };
   state.segments = [];
+  state.page = 1;
   renderGrid();
   $("statusText").textContent = "Starting audio peak analysis...";
   await postJson("/api/analyze", payload);
@@ -138,5 +162,17 @@ $("selectNoneBtn").addEventListener("click", () => {
   renderGrid();
 });
 
-setInterval(refreshState, 1500);
+$("prevPageBtn").addEventListener("click", () => {
+  state.page = Math.max(1, state.page - 1);
+  renderGrid();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+$("nextPageBtn").addEventListener("click", () => {
+  state.page = Math.min(pageCount(), state.page + 1);
+  renderGrid();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+setInterval(refreshState, 3000);
 refreshState();

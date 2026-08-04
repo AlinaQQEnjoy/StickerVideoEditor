@@ -28,7 +28,8 @@ body {
 
 .topbar,
 .controls,
-.summary {
+.summary,
+.pager {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -137,6 +138,17 @@ button:disabled {
   min-height: 52px;
 }
 
+.pager {
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.pager span {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 .summary div {
   display: flex;
   align-items: baseline;
@@ -238,7 +250,8 @@ button:disabled {
   }
 
   .topbar,
-  .summary {
+  .summary,
+  .pager {
     flex-direction: column;
   }
 

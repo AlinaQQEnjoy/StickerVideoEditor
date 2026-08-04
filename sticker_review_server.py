@@ -321,9 +321,17 @@ def parse_score_to_dbfs(text: str) -> float:
     return float(match.group(0)) if match else 0.0
 
 
-def default_final_video(name: str) -> Path:
+def safe_filename_part(text: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in text.strip())
+    return cleaned.strip("_") or "video"
+
+
+def default_final_video(process_id: str, input_video: str = "") -> Path:
     date_folder = time.strftime("%Y-%m-%d")
-    return FINAL_OUTPUT_ROOT / date_folder / name
+    source_name = safe_filename_part(Path(input_video).stem if input_video else "sticker_action")
+    process_name = safe_filename_part(process_id)
+    stamp = time.strftime("%H%M%S")
+    return FINAL_OUTPUT_ROOT / date_folder / f"{source_name}_{process_name}_{stamp}.mp4"
 
 
 def pick_video_file() -> str:
@@ -641,7 +649,7 @@ def export_worker(payload: dict[str, object]) -> None:
         selected = [int(x) for x in payload.get("selected", [])]
         if not selected:
             raise RuntimeError("No segments selected.")
-        final_video = Path(str(payload.get("finalVideo") or default_final_video("sticker_action_final.mp4")))
+        final_video = Path(str(payload.get("finalVideo") or default_final_video(process_id, str(process.get("inputVideo") or ""))))
         if not final_video.is_absolute():
             final_video = out_dir / final_video
         final_video.parent.mkdir(parents=True, exist_ok=True)

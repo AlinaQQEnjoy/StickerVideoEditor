@@ -134,7 +134,9 @@ if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
 if ([string]::IsNullOrWhiteSpace($FinalVideo)) {
     $dateFolder = Get-Date -Format "yyyy-MM-dd"
     $editedFolderName = -join ([char[]](0x526A, 0x8F91, 0x540E, 0x89C6, 0x9891))
-    $FinalVideo = Join-Path (Join-Path (Join-Path "D:\MellowScape" $editedFolderName) $dateFolder) "audio_peak_cut.mp4"
+    $sourceName = [System.IO.Path]::GetFileNameWithoutExtension($InputVideo)
+    $stamp = Get-Date -Format "HHmmss"
+    $FinalVideo = Join-Path (Join-Path (Join-Path "D:\MellowScape" $editedFolderName) $dateFolder) ("{0}_audio_peak_cut_{1}.mp4" -f $sourceName, $stamp)
 }
 if (-not [System.IO.Path]::IsPathRooted($FinalVideo)) {
     $FinalVideo = Join-Path $ScriptDir $FinalVideo

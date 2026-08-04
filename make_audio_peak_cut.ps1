@@ -16,7 +16,8 @@ param(
     [double]$BoostGainDb = 20.0,
     [string]$VideoEncoder = "h264_nvenc",
     [double]$VideoQuality = 16.0,
-    [int]$X264Threads = 1
+    [int]$X264Threads = 1,
+    [bool]$UpscaleTo4K = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -85,6 +86,44 @@ function Get-VideoEncodeArgs {
     )
 }
 
+function Resolve-FfprobePath {
+    param([string]$FfmpegPath)
+    $candidate = Join-Path (Split-Path -Parent $FfmpegPath) "ffprobe.exe"
+    if (Test-Path -LiteralPath $candidate) {
+        return (Resolve-Path -LiteralPath $candidate).Path
+    }
+    return (Resolve-CommandPath -Command "ffprobe" -Name "FFprobe")
+}
+
+function Get-VideoScaleArgs {
+    param([string]$VideoPath, [string]$FfmpegPath)
+    if (-not $UpscaleTo4K) {
+        return @()
+    }
+
+    $ffprobe = Resolve-FfprobePath -FfmpegPath $FfmpegPath
+    $sizeText = (& $ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 $VideoPath).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sizeText)) {
+        throw "Could not read source video dimensions."
+    }
+    $parts = $sizeText -split "x"
+    $width = [int]$parts[0]
+    $height = [int]$parts[1]
+    $targetWidth = 3840
+    $targetHeight = 2160
+    if ($height -ge $width) {
+        $targetWidth = 2160
+        $targetHeight = 3840
+    }
+    if ($width -ge $targetWidth -and $height -ge $targetHeight) {
+        Write-Host "Source is already 4K or higher: ${width}x${height}"
+        return @()
+    }
+    $scale = "scale=${targetWidth}:${targetHeight}:flags=lanczos"
+    Write-Host "Upscaling clips to 4K: ${width}x${height} -> ${targetWidth}x${targetHeight}"
+    return @("-vf", $scale)
+}
+
 if (-not (Test-Path -LiteralPath $InputVideo)) {
     throw "Input video not found: $InputVideo"
 }
@@ -103,6 +142,7 @@ if (-not [System.IO.Path]::IsPathRooted($FinalVideo)) {
 
 $ffmpeg = Resolve-CommandPath -Command $FfmpegExe -Name "FFmpeg"
 $python = Resolve-CommandPath -Command $PythonExe -Name "Python"
+$videoScaleArgs = Get-VideoScaleArgs -VideoPath $InputVideo -FfmpegPath $ffmpeg
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $detectorArgs = @(
@@ -162,7 +202,7 @@ for ($i = 0; $i -lt $segments.Count; $i++) {
         "-ss", (Format-FfmpegSeconds $start),
         "-i", $InputVideo,
         "-t", (Format-FfmpegSeconds $duration)
-    ) + $videoArgs + $audioArgs + @(
+    ) + $videoScaleArgs + $videoArgs + $audioArgs + @(
         "-movflags", "+faststart",
         $clipPath
     )

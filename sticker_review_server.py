@@ -236,6 +236,49 @@ def run(cmd: list[str], process_id: str) -> None:
         raise RuntimeError("".join(output_parts))
 
 
+def ffprobe_path(ffmpeg: Path) -> Path:
+    candidate = ffmpeg.with_name("ffprobe.exe")
+    if candidate.exists():
+        return candidate
+    return Path("ffprobe")
+
+
+def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
+    result = subprocess.run(
+        [
+            str(ffprobe_path(ffmpeg)),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=s=x:p=0",
+            str(input_video),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Could not read source video dimensions.")
+    size_text = result.stdout.strip().splitlines()[0]
+    width_text, height_text = size_text.split("x", 1)
+    return int(width_text), int(height_text)
+
+
+def four_k_scale_args(input_video: Path, ffmpeg: Path) -> list[str]:
+    width, height = source_video_size(input_video, ffmpeg)
+    target_width, target_height = (2160, 3840) if height >= width else (3840, 2160)
+    if width >= target_width and height >= target_height:
+        return []
+    return ["-vf", f"scale={target_width}:{target_height}:flags=lanczos"]
+
+
 def cleanup_task_output(path: Path | None) -> None:
     if path is None:
         return
@@ -379,6 +422,7 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path, process_id: s
     with (out_dir / "segments.csv").open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     total = max(1, len(rows))
+    scale_args = four_k_scale_args(input_video, ffmpeg)
     for row_number, row in enumerate(rows, start=1):
         if process_cancelled(process_id):
             raise CancelledError("Task was cancelled.")
@@ -404,6 +448,7 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path, process_id: s
                 str(input_video),
                 "-t",
                 f"{duration:.3f}",
+                *scale_args,
                 "-c:v",
                 "h264_nvenc",
                 "-preset",

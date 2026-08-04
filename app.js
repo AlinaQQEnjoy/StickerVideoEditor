@@ -3,6 +3,8 @@ const state = {
   busy: false,
   page: 1,
   pageSize: 24,
+  activeProcessId: "",
+  processes: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,6 +30,23 @@ function setBusy(isBusy) {
   $("clearClipsBtn").disabled = isBusy;
   $("prevPageBtn").disabled = isBusy || state.page <= 1;
   $("nextPageBtn").disabled = isBusy || state.page >= pageCount();
+}
+
+function renderProcesses(data) {
+  state.activeProcessId = data.activeProcessId || "";
+  state.processes = data.processes || [];
+  const select = $("processSelect");
+  const current = select.value;
+  select.innerHTML = "";
+  state.processes.forEach((process) => {
+    const option = document.createElement("option");
+    option.value = process.id;
+    const running = process.busy ? " · running" : "";
+    const count = Number(process.segmentCount || 0);
+    option.textContent = `${process.name || process.id}${running} · ${count} clips`;
+    select.append(option);
+  });
+  select.value = state.activeProcessId || current;
 }
 
 function updateCounts() {
@@ -126,6 +145,7 @@ async function refreshState() {
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
   $("finalPathText").textContent = data.finalVideo ? `\u5bfc\u51fa\u8def\u5f84: ${data.finalVideo}` : "";
   $("outputText").textContent = data.finalVideo ? `\u6210\u54c1: ${data.finalVideo}` : `\u8f93\u51fa\u76ee\u5f55: ${data.outputDir || ""}`;
+  renderProcesses(data);
   updateProgress(data);
   setBusy(Boolean(data.busy));
 
@@ -144,6 +164,7 @@ async function refreshState() {
 async function analyze() {
   const payload = {
     inputVideo: $("inputVideo").value,
+    processId: state.activeProcessId,
     thresholdDbfs: Number($("thresholdDbfs").value),
     preRoll: Number($("preRoll").value),
     postRoll: Number($("postRoll").value),
@@ -163,7 +184,7 @@ async function exportSelected() {
   const selected = selectedIds();
   $("statusText").textContent = "Starting export...";
   updateProgress({ progressPercent: 1, progressText: "Starting export..." });
-  await postJson("/api/export", { selected });
+  await postJson("/api/export", { selected, processId: state.activeProcessId });
   await refreshState();
 }
 
@@ -184,7 +205,7 @@ async function clearCachedClips() {
     return;
   }
   $("statusText").textContent = "\u6b63\u5728\u6e05\u7a7a\u6682\u5b58\u7247\u6bb5...";
-  const data = await postJson("/api/clear-clips", {});
+  const data = await postJson("/api/clear-clips", { processId: state.activeProcessId });
   state.segments = [];
   state.page = 1;
   renderGrid();
@@ -196,7 +217,25 @@ async function clearCachedClips() {
 async function cancelCurrentTask() {
   $("statusText").textContent = "\u6b63\u5728\u505c\u6b62\u5f53\u524d\u8bc6\u522b...";
   updateProgress({ progressPercent: 0, progressText: "\u6b63\u5728\u505c\u6b62" });
-  await postJson("/api/cancel", {});
+  await postJson("/api/cancel", { processId: state.activeProcessId });
+  await refreshState();
+}
+
+async function addProcess() {
+  const data = await postJson("/api/add-process", {});
+  if (data.state) {
+    await refreshState();
+  }
+}
+
+async function selectProcess() {
+  const processId = $("processSelect").value;
+  if (!processId || processId === state.activeProcessId) {
+    return;
+  }
+  await postJson("/api/select-process", { processId });
+  state.segments = [];
+  state.page = 1;
   await refreshState();
 }
 
@@ -217,6 +256,14 @@ $("clearClipsBtn").addEventListener("click", () => clearCachedClips().catch((err
 }));
 
 $("cancelBtn").addEventListener("click", () => cancelCurrentTask().catch((err) => {
+  $("statusText").textContent = err.message;
+}));
+
+$("addProcessBtn").addEventListener("click", () => addProcess().catch((err) => {
+  $("statusText").textContent = err.message;
+}));
+
+$("processSelect").addEventListener("change", () => selectProcess().catch((err) => {
   $("statusText").textContent = err.message;
 }));
 

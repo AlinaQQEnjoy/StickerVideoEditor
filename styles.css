@@ -27,6 +27,7 @@ body {
 }
 
 .topbar,
+.process-panel,
 .controls,
 .summary,
 .pager,
@@ -65,8 +66,13 @@ p {
 }
 
 .actions,
+.process-panel,
 .controls {
   flex-wrap: wrap;
+}
+
+.process-panel {
+  margin-top: 12px;
 }
 
 .controls {
@@ -97,6 +103,17 @@ input {
   font-size: 14px;
   background: #fff;
   color: var(--ink);
+}
+
+select {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink);
+  min-width: 260px;
 }
 
 .path-row {
@@ -307,6 +324,7 @@ button:disabled {
   }
 
   .topbar,
+  .process-panel,
   .summary,
   .pager,
   .progress-row {

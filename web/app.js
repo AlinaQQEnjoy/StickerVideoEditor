@@ -45,6 +45,7 @@ function renderGrid() {
         <span class="score">${segment.score}</span>
       </div>
       <div class="time">${segment.start} - ${segment.end} / ${segment.duration}s</div>
+      <div class="time">峰值: ${segment.anchor}</div>
       <div class="time">${segment.note}</div>
     `;
 
@@ -99,14 +100,15 @@ async function refreshState() {
 async function analyze() {
   const payload = {
     inputVideo: $("inputVideo").value,
-    roi: $("roi").value,
-    motionThreshold: Number($("motionThreshold").value),
-    maxActions: Number($("maxActions").value),
-    disableAudio: $("disableAudio").checked,
+    thresholdDbfs: Number($("thresholdDbfs").value),
+    preRoll: Number($("preRoll").value),
+    postRoll: Number($("postRoll").value),
+    minGap: Number($("minGap").value),
+    maxPeaks: Number($("maxPeaks").value),
   };
   state.segments = [];
   renderGrid();
-  $("statusText").textContent = "Starting analysis...";
+  $("statusText").textContent = "Starting audio peak analysis...";
   await postJson("/api/analyze", payload);
   await refreshState();
 }

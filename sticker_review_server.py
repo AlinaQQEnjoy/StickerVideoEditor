@@ -204,9 +204,9 @@ def analyze_worker(payload: dict[str, object]) -> None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         out_dir = WORK_DIR / timestamp
         out_dir.mkdir(parents=True, exist_ok=True)
-        set_state(busy=True, message="Detecting peel/release points...", inputVideo=str(input_video), outputDir=str(out_dir), error="")
+        set_state(busy=True, message="Detecting audio peaks...", inputVideo=str(input_video), outputDir=str(out_dir), error="")
 
-        detector = APP_DIR / "sticker_action_detector.py"
+        detector = APP_DIR / "audio_peak_detector.py"
         cmd = [
             str(python),
             str(detector),
@@ -216,19 +216,19 @@ def analyze_worker(payload: dict[str, object]) -> None:
             str(out_dir),
             "--ffmpeg",
             str(ffmpeg),
-            "--roi",
-            str(payload.get("roi") or "0,0,1,1"),
-            "--analysis-fps",
-            str(payload.get("analysisFps") or 12),
-            "--max-actions",
-            str(payload.get("maxActions") or 80),
-            "--motion-threshold",
-            str(payload.get("motionThreshold") or 1.4),
-            "--audio-threshold",
-            str(payload.get("audioThreshold") or 2.4),
+            "--threshold-dbfs",
+            str(payload.get("thresholdDbfs") or -20),
+            "--pre-roll",
+            str(payload.get("preRoll") or 0.4),
+            "--post-roll",
+            str(payload.get("postRoll") or 0.4),
+            "--min-gap",
+            str(payload.get("minGap") or 0.3),
+            "--window-ms",
+            str(payload.get("windowMs") or 10),
+            "--max-peaks",
+            str(payload.get("maxPeaks") or 300),
         ]
-        if payload.get("disableAudio"):
-            cmd.append("--disable-audio")
         run(cmd)
 
         set_state(message="Building preview clips...")

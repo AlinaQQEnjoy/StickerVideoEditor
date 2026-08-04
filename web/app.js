@@ -23,6 +23,7 @@ function visibleSegments() {
 function setBusy(isBusy) {
   state.busy = isBusy;
   $("analyzeBtn").disabled = isBusy;
+  $("cancelBtn").disabled = !isBusy;
   $("exportBtn").disabled = isBusy || selectedIds().length === 0;
   $("clearClipsBtn").disabled = isBusy;
   $("prevPageBtn").disabled = isBusy || state.page <= 1;
@@ -192,6 +193,13 @@ async function clearCachedClips() {
   await refreshState();
 }
 
+async function cancelCurrentTask() {
+  $("statusText").textContent = "\u6b63\u5728\u505c\u6b62\u5f53\u524d\u8bc6\u522b...";
+  updateProgress({ progressPercent: 0, progressText: "\u6b63\u5728\u505c\u6b62" });
+  await postJson("/api/cancel", {});
+  await refreshState();
+}
+
 $("analyzeBtn").addEventListener("click", () => analyze().catch((err) => {
   $("statusText").textContent = err.message;
 }));
@@ -205,6 +213,10 @@ $("pickVideoBtn").addEventListener("click", () => pickVideo().catch((err) => {
 }));
 
 $("clearClipsBtn").addEventListener("click", () => clearCachedClips().catch((err) => {
+  $("statusText").textContent = err.message;
+}));
+
+$("cancelBtn").addEventListener("click", () => cancelCurrentTask().catch((err) => {
   $("statusText").textContent = err.message;
 }));
 

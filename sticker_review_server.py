@@ -25,6 +25,10 @@ FINAL_OUTPUT_ROOT = Path(r"D:\MellowScape") / "\u526a\u8f91\u540e\u89c6\u9891"
 WORK_DIR = APP_DIR / "review_output"
 STATIC_DIR = APP_DIR / "web"
 STATE_LOCK = threading.Lock()
+CANCEL_EVENT = threading.Event()
+PROCESS_LOCK = threading.Lock()
+CURRENT_PROCESS: subprocess.Popen[str] | None = None
+CURRENT_TASK_OUTPUT: Path | None = None
 STATE: dict[str, object] = {
     "busy": False,
     "message": "Ready.",
@@ -35,7 +39,12 @@ STATE: dict[str, object] = {
     "error": "",
     "progressPercent": 0,
     "progressText": "",
+    "canCancel": False,
 }
+
+
+class CancelledError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -64,9 +73,56 @@ def get_state() -> dict[str, object]:
 
 
 def run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    global CURRENT_PROCESS
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with PROCESS_LOCK:
+        CURRENT_PROCESS = proc
+    output_parts: list[str] = []
+    try:
+        while proc.poll() is None:
+            if CANCEL_EVENT.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                raise CancelledError("Task was cancelled.")
+            time.sleep(0.2)
+        if proc.stdout is not None:
+            output_parts.append(proc.stdout.read())
+    finally:
+        with PROCESS_LOCK:
+            if CURRENT_PROCESS is proc:
+                CURRENT_PROCESS = None
+        if proc.stdout is not None:
+            proc.stdout.close()
     if proc.returncode != 0:
-        raise RuntimeError(proc.stdout)
+        raise RuntimeError("".join(output_parts))
+
+
+def cleanup_task_output(path: Path | None) -> None:
+    if path is None:
+        return
+    target = path.resolve()
+    app_root = APP_DIR.resolve()
+    if not str(target).lower().startswith(str(app_root).lower()):
+        return
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def request_cancel() -> dict[str, object]:
+    if not get_state().get("busy"):
+        CANCEL_EVENT.clear()
+        return {"ok": True, "cancelled": False, "message": "No running task."}
+    CANCEL_EVENT.set()
+    with PROCESS_LOCK:
+        proc = CURRENT_PROCESS
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+    set_state(message="Cancelling current task...", progressText="Cancelling", canCancel=False)
+    return {"ok": True}
 
 
 def parse_time_to_seconds(text: str) -> float:
@@ -179,6 +235,8 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
         rows = list(csv.DictReader(f))
     total = max(1, len(rows))
     for row_number, row in enumerate(rows, start=1):
+        if CANCEL_EVENT.is_set():
+            raise CancelledError("Task was cancelled.")
         index = int(row["index"])
         start = parse_time_to_seconds(row["start"])
         duration = float(row["duration"])
@@ -246,7 +304,9 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
 
 
 def analyze_worker(payload: dict[str, object]) -> None:
+    global CURRENT_TASK_OUTPUT
     try:
+        CANCEL_EVENT.clear()
         input_video = Path(str(payload.get("inputVideo", "")).strip().strip('"'))
         if not input_video.exists():
             raise RuntimeError(f"Input video not found: {input_video}")
@@ -260,6 +320,7 @@ def analyze_worker(payload: dict[str, object]) -> None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         out_dir = WORK_DIR / timestamp
         out_dir.mkdir(parents=True, exist_ok=True)
+        CURRENT_TASK_OUTPUT = out_dir
         set_state(
             busy=True,
             message="Detecting audio peaks...",
@@ -268,6 +329,7 @@ def analyze_worker(payload: dict[str, object]) -> None:
             error="",
             progressPercent=5,
             progressText="Detecting audio peaks",
+            canCancel=True,
         )
 
         detector = APP_DIR / "audio_peak_detector.py"
@@ -305,9 +367,26 @@ def analyze_worker(payload: dict[str, object]) -> None:
             outputDir=str(out_dir),
             progressPercent=100,
             progressText="Analysis complete",
+            canCancel=False,
+        )
+        CURRENT_TASK_OUTPUT = None
+    except CancelledError:
+        cleanup_task_output(CURRENT_TASK_OUTPUT)
+        CURRENT_TASK_OUTPUT = None
+        CANCEL_EVENT.clear()
+        set_state(
+            busy=False,
+            message="Recognition stopped. Temporary clips were deleted.",
+            segments=[],
+            error="",
+            progressPercent=0,
+            progressText="Stopped",
+            canCancel=False,
         )
     except Exception as exc:
-        set_state(busy=False, message="Analyze failed.", error=str(exc), progressPercent=0, progressText="Analyze failed")
+        CURRENT_TASK_OUTPUT = None
+        CANCEL_EVENT.clear()
+        set_state(busy=False, message="Analyze failed.", error=str(exc), progressPercent=0, progressText="Analyze failed", canCancel=False)
 
 
 def load_output(payload: dict[str, object]) -> dict[str, object]:
@@ -337,6 +416,7 @@ def load_output(payload: dict[str, object]) -> dict[str, object]:
 
 def export_worker(payload: dict[str, object]) -> None:
     try:
+        CANCEL_EVENT.clear()
         state = get_state()
         out_dir = Path(str(state["outputDir"]))
         ffmpeg = Path(str(payload.get("ffmpeg") or DEFAULT_FFMPEG))
@@ -354,6 +434,7 @@ def export_worker(payload: dict[str, object]) -> None:
             error="",
             progressPercent=15,
             progressText=f"Preparing {len(selected)} selected clips",
+            canCancel=True,
         )
         concat_path = out_dir / "selected_concat.txt"
         lines: list[str] = []
@@ -395,9 +476,21 @@ def export_worker(payload: dict[str, object]) -> None:
             finalVideo=str(final_video),
             progressPercent=100,
             progressText="Export complete",
+            canCancel=False,
+        )
+    except CancelledError:
+        CANCEL_EVENT.clear()
+        set_state(
+            busy=False,
+            message="Export stopped.",
+            error="",
+            progressPercent=0,
+            progressText="Stopped",
+            canCancel=False,
         )
     except Exception as exc:
-        set_state(busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed")
+        CANCEL_EVENT.clear()
+        set_state(busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed", canCancel=False)
 
 
 def clear_clips(payload: dict[str, object]) -> dict[str, object]:
@@ -489,6 +582,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/cancel":
+            self.send_json(request_cancel())
+            return
         if get_state().get("busy"):
             self.send_json({"ok": False, "error": "Server is busy."}, 409)
             return

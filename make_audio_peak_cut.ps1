@@ -91,9 +91,12 @@ if ($segments.Count -eq 0) {
 }
 
 $clipsDir = Join-Path $OutputDir "clips"
+$thumbsDir = Join-Path $OutputDir "thumbs"
 New-Item -ItemType Directory -Force -Path $clipsDir | Out-Null
+New-Item -ItemType Directory -Force -Path $thumbsDir | Out-Null
 Get-ChildItem -LiteralPath $clipsDir -Filter "clip_*.mp4" -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem -LiteralPath $clipsDir -Filter "segment_*.mp4" -ErrorAction SilentlyContinue | Remove-Item -Force
+Get-ChildItem -LiteralPath $thumbsDir -Filter "segment_*.jpg" -ErrorAction SilentlyContinue | Remove-Item -Force
 
 $concatPath = Join-Path $OutputDir "concat_list.txt"
 $concatLines = New-Object System.Collections.Generic.List[string]
@@ -116,6 +119,20 @@ for ($i = 0; $i -lt $segments.Count; $i++) {
 
     if ($LASTEXITCODE -ne 0) {
         throw "Cutting clip $($i + 1) failed with exit code $LASTEXITCODE."
+    }
+
+    $thumbTime = $start + [Math]::Min($duration * 0.45, 0.35)
+    $thumbPath = Join-Path $thumbsDir ("segment_{0:D3}.jpg" -f ($i + 1))
+    & $ffmpeg -hide_banner -loglevel error -y `
+        -ss (Format-FfmpegSeconds $thumbTime) `
+        -i $InputVideo `
+        -frames:v 1 `
+        -vf "scale=360:-2" `
+        -q:v 3 `
+        $thumbPath
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generating thumbnail $($i + 1) failed with exit code $LASTEXITCODE."
     }
 
     $safeClipPath = ([System.IO.Path]::GetFullPath($clipPath)).Replace("\", "/").Replace("'", "'\''")

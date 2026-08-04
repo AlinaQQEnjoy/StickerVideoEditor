@@ -115,6 +115,7 @@ async function refreshState() {
   const response = await fetch("/api/state", { cache: "no-store" });
   const data = await response.json();
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
+  $("finalPathText").textContent = data.finalVideo ? `\u5bfc\u51fa\u8def\u5f84: ${data.finalVideo}` : "";
   $("outputText").textContent = data.finalVideo ? `\u6210\u54c1: ${data.finalVideo}` : `\u8f93\u51fa\u76ee\u5f55: ${data.outputDir || ""}`;
   setBusy(Boolean(data.busy));
 

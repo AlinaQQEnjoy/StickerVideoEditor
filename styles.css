@@ -55,6 +55,14 @@ p {
   font-size: 13px;
 }
 
+.final-path {
+  margin-top: 5px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 .actions,
 .controls {
   flex-wrap: wrap;

@@ -86,6 +86,29 @@ def default_final_video(name: str) -> Path:
     return FINAL_OUTPUT_ROOT / date_folder / name
 
 
+def pick_video_file() -> str:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        initial_dir = Path(r"D:\MellowScape") / "\u539f\u89c6\u9891"
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(
+            title="\u9009\u62e9\u539f\u89c6\u9891",
+            initialdir=str(initial_dir) if initial_dir.exists() else str(Path.home()),
+            filetypes=[
+                ("\u89c6\u9891\u6587\u4ef6", "*.mov *.MOV *.mp4 *.MP4 *.m4v *.M4V"),
+                ("\u6240\u6709\u6587\u4ef6", "*.*"),
+            ],
+        )
+        root.destroy()
+        return path or ""
+    except Exception as exc:
+        raise RuntimeError(f"Could not open file picker: {exc}") from exc
+
+
 def rel_url(path: Path) -> str:
     rel = path.resolve().relative_to(APP_DIR)
     return "/file/" + urllib.parse.quote(rel.as_posix())
@@ -397,6 +420,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/export":
             threading.Thread(target=export_worker, args=(payload,), daemon=True).start()
             self.send_json({"ok": True})
+            return
+        if parsed.path == "/api/pick-video":
+            try:
+                self.send_json({"ok": True, "path": pick_video_file()})
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 500)
             return
         if parsed.path == "/api/load-output":
             try:

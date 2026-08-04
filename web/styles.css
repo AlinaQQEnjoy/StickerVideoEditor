@@ -98,6 +98,13 @@ input {
   color: var(--ink);
 }
 
+.path-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .toggle {
   display: flex;
   align-items: center;

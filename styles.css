@@ -144,6 +144,17 @@ button.primary:hover {
   background: var(--accent-dark);
 }
 
+button.danger {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+
+button.danger:hover {
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: wait;

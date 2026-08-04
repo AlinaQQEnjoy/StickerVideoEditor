@@ -29,7 +29,8 @@ body {
 .topbar,
 .controls,
 .summary,
-.pager {
+.pager,
+.progress-panel {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -153,6 +154,36 @@ button:disabled {
   min-height: 52px;
 }
 
+.progress-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.progress-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f7;
+  border: 1px solid var(--line);
+}
+
+.progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
 .pager {
   justify-content: center;
   margin-top: 12px;
@@ -266,7 +297,8 @@ button:disabled {
 
   .topbar,
   .summary,
-  .pager {
+  .pager,
+  .progress-row {
     flex-direction: column;
   }
 

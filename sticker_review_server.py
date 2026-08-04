@@ -365,6 +365,17 @@ def rel_url(path: Path) -> str:
 def send_cache_headers(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Cache-Control", "no-store, max-age=0")
     handler.send_header("Pragma", "no-cache")
+    origin = handler.headers.get("Origin", "")
+    allowed_origins = {
+        "https://alinaqqenjoy.github.io",
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
+    }
+    if origin in allowed_origins:
+        handler.send_header("Access-Control-Allow-Origin", origin)
+        handler.send_header("Vary", "Origin")
+        handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        handler.send_header("Access-Control-Allow-Headers", "Content-Type")
 
 
 def find_segment_clip(out_dir: Path, index: int) -> Path:
@@ -774,6 +785,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        send_cache_headers(self)
         self.end_headers()
         self.wfile.write(body)
 
@@ -782,6 +794,11 @@ class Handler(BaseHTTPRequestHandler):
         if length <= 0:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        send_cache_headers(self)
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)

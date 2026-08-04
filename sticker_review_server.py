@@ -78,6 +78,11 @@ def rel_url(path: Path) -> str:
     return "/file/" + urllib.parse.quote(rel.as_posix())
 
 
+def send_cache_headers(handler: BaseHTTPRequestHandler) -> None:
+    handler.send_header("Cache-Control", "no-store, max-age=0")
+    handler.send_header("Pragma", "no-cache")
+
+
 def find_segment_clip(out_dir: Path, index: int) -> Path:
     segment_clip = out_dir / "clips" / f"segment_{index:03d}.mp4"
     if segment_clip.exists():
@@ -347,6 +352,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
+            send_cache_headers(self)
             self.end_headers()
             self.wfile.write(data)
             return
@@ -359,6 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "text/plain")
         self.send_header("Content-Length", str(len(data)))
+        send_cache_headers(self)
         self.end_headers()
         self.wfile.write(data)
 

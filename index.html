@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sticker Action Review</title>
+  <title>贴纸音频峰值剪辑</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="shell">
     <section class="topbar">
       <div>
-        <h1>贴纸片段审核台</h1>
+        <h1>贴纸音频峰值剪辑</h1>
         <p id="statusText">Ready.</p>
       </div>
       <div class="actions">
@@ -23,25 +23,29 @@
     <section class="controls">
       <label class="field wide">
         <span>原视频路径</span>
-        <input id="inputVideo" value="D:\MellowScape\原视频\IMG_2038.MOV">
+        <input id="inputVideo" value="D:\MellowScape\原视频\IMG_4833.MOV">
       </label>
       <label class="field">
-        <span>ROI</span>
-        <input id="roi" value="0,0,1,1">
+        <span>峰值阈值 dBFS</span>
+        <input id="thresholdDbfs" type="number" value="-20" step="1">
       </label>
       <label class="field">
-        <span>动作阈值</span>
-        <input id="motionThreshold" type="number" value="1.4" step="0.1">
+        <span>峰值前截取</span>
+        <input id="preRoll" type="number" value="0.4" step="0.05">
       </label>
       <label class="field">
-        <span>最多动作</span>
-        <input id="maxActions" type="number" value="80" step="1">
+        <span>峰值后截取</span>
+        <input id="postRoll" type="number" value="0.4" step="0.05">
       </label>
-      <label class="toggle">
-        <input id="disableAudio" type="checkbox">
-        <span>不用音频辅助</span>
+      <label class="field">
+        <span>最小峰值间隔</span>
+        <input id="minGap" type="number" value="0.3" step="0.05">
       </label>
-      <button id="analyzeBtn" type="button" class="primary">识别片段</button>
+      <label class="field">
+        <span>最多片段</span>
+        <input id="maxPeaks" type="number" value="300" step="1">
+      </label>
+      <button id="analyzeBtn" type="button" class="primary">识别音频峰值</button>
     </section>
 
     <section class="summary">

@@ -9,6 +9,29 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+const API_BASE = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const explicit = params.get("api");
+  if (explicit) {
+    return explicit.replace(/\/$/, "");
+  }
+  if (window.location.hostname.endsWith("github.io")) {
+    return "http://127.0.0.1:8787";
+  }
+  return "";
+})();
+
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
+}
+
+function assetUrl(path) {
+  if (!path || /^https?:\/\//i.test(path)) {
+    return path || "";
+  }
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
+
 function selectedIds() {
   return state.segments.filter((item) => item.selected).map((item) => item.index);
 }
@@ -84,9 +107,9 @@ function renderGrid() {
 
     const video = document.createElement("video");
     video.className = "preview";
-    video.src = segment.clip;
+    video.src = assetUrl(segment.clip);
     if (segment.thumb) {
-      video.poster = segment.thumb;
+      video.poster = assetUrl(segment.thumb);
     }
     video.controls = true;
     video.playsInline = true;
@@ -127,7 +150,7 @@ function renderGrid() {
 }
 
 async function postJson(url, payload) {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -140,7 +163,7 @@ async function postJson(url, payload) {
 }
 
 async function refreshState() {
-  const response = await fetch("/api/state", { cache: "no-store" });
+  const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
   const data = await response.json();
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
   $("finalPathText").textContent = data.finalVideo ? `\u5bfc\u51fa\u8def\u5f84: ${data.finalVideo}` : "";

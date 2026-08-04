@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$InputVideo,
     [string]$OutputDir = "sticker_action_output",
-    [string]$FinalVideo = "sticker_action_output\audio_peak_cut.mp4",
+    [string]$FinalVideo = "",
     [string]$FfmpegExe = "D:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
     [string]$PythonExe = "C:\Users\ASUS\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe",
     [double]$ThresholdDbfs = -20.0,
@@ -91,6 +91,11 @@ if (-not (Test-Path -LiteralPath $InputVideo)) {
 
 if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
     $OutputDir = Join-Path $ScriptDir $OutputDir
+}
+if ([string]::IsNullOrWhiteSpace($FinalVideo)) {
+    $dateFolder = Get-Date -Format "yyyy-MM-dd"
+    $editedFolderName = -join ([char[]](0x526A, 0x8F91, 0x540E, 0x89C6, 0x9891))
+    $FinalVideo = Join-Path (Join-Path (Join-Path "D:\MellowScape" $editedFolderName) $dateFolder) "audio_peak_cut.mp4"
 }
 if (-not [System.IO.Path]::IsPathRooted($FinalVideo)) {
     $FinalVideo = Join-Path $ScriptDir $FinalVideo

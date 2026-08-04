@@ -21,6 +21,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_FFMPEG = Path(r"D:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe")
 DEFAULT_PYTHON = Path(r"C:\Users\ASUS\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe")
+FINAL_OUTPUT_ROOT = Path(r"D:\MellowScape") / "\u526a\u8f91\u540e\u89c6\u9891"
 WORK_DIR = APP_DIR / "review_output"
 STATIC_DIR = APP_DIR / "web"
 STATE_LOCK = threading.Lock()
@@ -78,6 +79,11 @@ def parse_score_to_dbfs(text: str) -> float:
 
     match = re.search(r"[-+]?\d+(?:\.\d+)?", text or "")
     return float(match.group(0)) if match else 0.0
+
+
+def default_final_video(name: str) -> Path:
+    date_folder = time.strftime("%Y-%m-%d")
+    return FINAL_OUTPUT_ROOT / date_folder / name
 
 
 def rel_url(path: Path) -> str:
@@ -288,7 +294,7 @@ def export_worker(payload: dict[str, object]) -> None:
         selected = [int(x) for x in payload.get("selected", [])]
         if not selected:
             raise RuntimeError("No segments selected.")
-        final_video = Path(str(payload.get("finalVideo") or (out_dir / "sticker_action_final.mp4")))
+        final_video = Path(str(payload.get("finalVideo") or default_final_video("sticker_action_final.mp4")))
         if not final_video.is_absolute():
             final_video = out_dir / final_video
         final_video.parent.mkdir(parents=True, exist_ok=True)

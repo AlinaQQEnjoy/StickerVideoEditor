@@ -3,65 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>贴纸音频峰值剪辑</title>
-  <link rel="stylesheet" href="/styles.css?v=audio-peak-2">
+  <title>&#36148;&#32440;&#38899;&#39057;&#23792;&#20540;&#21098;&#36753;</title>
+  <link rel="stylesheet" href="/styles.css?v=audio-peak-3">
 </head>
 <body>
   <main class="shell">
     <section class="topbar">
       <div>
-        <h1>贴纸音频峰值剪辑</h1>
+        <h1>&#36148;&#32440;&#38899;&#39057;&#23792;&#20540;&#21098;&#36753;</h1>
         <p id="statusText">Ready.</p>
       </div>
       <div class="actions">
-        <button id="selectAllBtn" type="button">全选</button>
-        <button id="selectNoneBtn" type="button">清空</button>
-        <button id="exportBtn" type="button" class="primary">导出成品</button>
+        <button id="selectAllBtn" type="button">&#20840;&#36873;</button>
+        <button id="selectNoneBtn" type="button">&#28165;&#31354;</button>
+        <button id="exportBtn" type="button" class="primary">&#23548;&#20986;&#25104;&#21697;</button>
       </div>
     </section>
 
     <section class="controls">
       <label class="field wide">
-        <span>原视频路径</span>
-        <input id="inputVideo" value="D:\MellowScape\原视频\IMG_4833.MOV">
+        <span>&#21407;&#35270;&#39057;&#36335;&#24452;</span>
+        <input id="inputVideo" value="D:\MellowScape\&#21407;&#35270;&#39057;\IMG_4833.MOV">
       </label>
       <label class="field">
-        <span>峰值阈值 dBFS</span>
+        <span>&#23792;&#20540;&#38408;&#20540; dBFS</span>
         <input id="thresholdDbfs" type="number" value="-20" step="1">
       </label>
       <label class="field">
-        <span>峰值前截取</span>
+        <span>&#23792;&#20540;&#21069;&#25130;&#21462;</span>
         <input id="preRoll" type="number" value="0.4" step="0.05">
       </label>
       <label class="field">
-        <span>峰值后截取</span>
+        <span>&#23792;&#20540;&#21518;&#25130;&#21462;</span>
         <input id="postRoll" type="number" value="0.4" step="0.05">
       </label>
       <label class="field">
-        <span>最小峰值间隔</span>
+        <span>&#26368;&#23567;&#23792;&#20540;&#38388;&#38548;</span>
         <input id="minGap" type="number" value="0.3" step="0.05">
       </label>
       <label class="field">
-        <span>最多片段</span>
+        <span>&#26368;&#22810;&#29255;&#27573;</span>
         <input id="maxPeaks" type="number" value="300" step="1">
       </label>
-      <button id="analyzeBtn" type="button" class="primary">识别音频峰值</button>
+      <button id="analyzeBtn" type="button" class="primary">&#35782;&#21035;&#38899;&#39057;&#23792;&#20540;</button>
     </section>
 
     <section class="summary">
-      <div><strong id="countText">0</strong><span>片段</span></div>
-      <div><strong id="selectedText">0</strong><span>已选</span></div>
+      <div><strong id="countText">0</strong><span>&#29255;&#27573;</span></div>
+      <div><strong id="selectedText">0</strong><span>&#24050;&#36873;</span></div>
       <div class="output" id="outputText"></div>
     </section>
 
     <section class="pager">
-      <button id="prevPageBtn" type="button">上一页</button>
-      <span id="pageText">第 0 / 0 页</span>
-      <button id="nextPageBtn" type="button">下一页</button>
+      <button id="prevPageBtn" type="button">&#19978;&#19968;&#39029;</button>
+      <span id="pageText">&#31532; 0 / 0 &#39029;</span>
+      <button id="nextPageBtn" type="button">&#19979;&#19968;&#39029;</button>
     </section>
 
     <section id="grid" class="grid"></section>
   </main>
-  <script src="/app.js?v=audio-peak-2"></script>
+  <script src="/app.js?v=audio-peak-3"></script>
 </body>
 </html>

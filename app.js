@@ -31,10 +31,20 @@ function setBusy(isBusy) {
 function updateCounts() {
   $("countText").textContent = state.segments.length;
   $("selectedText").textContent = selectedIds().length;
-  $("pageText").textContent = `第 ${state.segments.length ? state.page : 0} / ${state.segments.length ? pageCount() : 0} 页`;
+  $("pageText").textContent = `\u7b2c ${state.segments.length ? state.page : 0} / ${state.segments.length ? pageCount() : 0} \u9875`;
   $("exportBtn").disabled = state.busy || selectedIds().length === 0;
   $("prevPageBtn").disabled = state.busy || state.page <= 1;
   $("nextPageBtn").disabled = state.busy || state.page >= pageCount();
+}
+
+function configureAudio(video) {
+  video.muted = false;
+  video.defaultMuted = false;
+  video.volume = 1;
+  video.addEventListener("play", () => {
+    video.muted = false;
+    video.volume = 1;
+  });
 }
 
 function renderGrid() {
@@ -51,9 +61,9 @@ function renderGrid() {
       video.poster = segment.thumb;
     }
     video.controls = true;
-    video.muted = true;
     video.playsInline = true;
     video.preload = "none";
+    configureAudio(video);
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -63,7 +73,7 @@ function renderGrid() {
         <span class="score">${segment.score}</span>
       </div>
       <div class="time">${segment.start} - ${segment.end} / ${segment.duration}s</div>
-      <div class="time">峰值: ${segment.anchor}</div>
+      <div class="time">\u5cf0\u503c: ${segment.anchor}</div>
       <div class="time">${segment.note}</div>
     `;
 
@@ -78,7 +88,7 @@ function renderGrid() {
       updateCounts();
     });
     const label = document.createElement("span");
-    label.textContent = "保留这个片段";
+    label.textContent = "\u4fdd\u7559\u8fd9\u4e2a\u7247\u6bb5";
     checkline.append(checkbox, label);
     meta.append(checkline);
 
@@ -105,12 +115,12 @@ async function refreshState() {
   const response = await fetch("/api/state", { cache: "no-store" });
   const data = await response.json();
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
-  $("outputText").textContent = data.finalVideo ? `成品: ${data.finalVideo}` : `输出目录: ${data.outputDir || ""}`;
+  $("outputText").textContent = data.finalVideo ? `\u6210\u54c1: ${data.finalVideo}` : `\u8f93\u51fa\u76ee\u5f55: ${data.outputDir || ""}`;
   setBusy(Boolean(data.busy));
 
   const incoming = data.segments || [];
-  const incomingKey = JSON.stringify(incoming.map((x) => x.index));
-  const currentKey = JSON.stringify(state.segments.map((x) => x.index));
+  const incomingKey = JSON.stringify(incoming.map((x) => `${x.index}:${x.thumb || ""}`));
+  const currentKey = JSON.stringify(state.segments.map((x) => `${x.index}:${x.thumb || ""}`));
   if (incomingKey !== currentKey) {
     state.segments = incoming.map((item) => ({ ...item, selected: item.selected !== false }));
     state.page = 1;

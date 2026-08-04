@@ -11,7 +11,12 @@ param(
     [double]$MinGap = 0.3,
     [double]$WindowMs = 10.0,
     [int]$SampleRate = 48000,
-    [int]$MaxPeaks = 300
+    [int]$MaxPeaks = 300,
+    [double]$BoostBelowDbfs = -4.0,
+    [double]$BoostGainDb = 20.0,
+    [string]$VideoEncoder = "h264_nvenc",
+    [double]$VideoQuality = 16.0,
+    [int]$X264Threads = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +52,37 @@ function Convert-TimeTextToSeconds {
         return [double]::Parse($Text, $InvariantCulture)
     }
     return ([int]$parts[0] * 3600) + ([int]$parts[1] * 60) + [int]$parts[2] + ([int]$parts[3] / 1000.0)
+}
+
+function Convert-ScoreToDbfs {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return 0.0
+    }
+    $match = [regex]::Match($Text, "[-+]?\d+(?:\.\d+)?")
+    if (-not $match.Success) {
+        return 0.0
+    }
+    return [double]::Parse($match.Value, $InvariantCulture)
+}
+
+function Get-VideoEncodeArgs {
+    if ($VideoEncoder -eq "h264_nvenc") {
+        return @(
+            "-c:v", "h264_nvenc",
+            "-preset", "p5",
+            "-cq:v", (Format-InvariantNumber $VideoQuality),
+            "-b:v", "0",
+            "-pix_fmt", "yuv420p"
+        )
+    }
+    return @(
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", (Format-InvariantNumber $VideoQuality),
+        "-threads", $X264Threads,
+        "-pix_fmt", "yuv420p"
+    )
 }
 
 if (-not (Test-Path -LiteralPath $InputVideo)) {
@@ -85,7 +121,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $segmentsPath = Join-Path $OutputDir "segments.csv"
-$segments = Import-Csv -LiteralPath $segmentsPath
+$segments = @(Import-Csv -LiteralPath $segmentsPath)
 if ($segments.Count -eq 0) {
     throw "No audio peaks were detected. Try lowering -ThresholdDbfs, for example -24."
 }
@@ -100,22 +136,33 @@ Get-ChildItem -LiteralPath $thumbsDir -Filter "segment_*.jpg" -ErrorAction Silen
 
 $concatPath = Join-Path $OutputDir "concat_list.txt"
 $concatLines = New-Object System.Collections.Generic.List[string]
+$videoArgs = Get-VideoEncodeArgs
 
 Write-Host "Cutting $($segments.Count) audio peak clips..."
 for ($i = 0; $i -lt $segments.Count; $i++) {
     $start = Convert-TimeTextToSeconds $segments[$i].start
     $duration = [double]::Parse($segments[$i].duration, $InvariantCulture)
+    $peakDbfs = Convert-ScoreToDbfs $segments[$i].score
+    $audioArgs = @("-c:a", "aac", "-b:a", "160k")
+    if ($peakDbfs -lt $BoostBelowDbfs) {
+        $gainFilter = "volume={0}dB" -f (Format-InvariantNumber $BoostGainDb)
+        $audioArgs = @("-af", $gainFilter, "-c:a", "aac", "-b:a", "160k")
+        Write-Host ("Boosting clip {0} audio by +{1}dB, peak {2} dBFS" -f ($i + 1), (Format-InvariantNumber $BoostGainDb), $peakDbfs.ToString("0.0", $InvariantCulture))
+    }
     $clipName = "clip_{0:D3}_{1}.mp4" -f ($i + 1), $segments[$i].kind.Replace("+", "_")
     $clipPath = Join-Path $clipsDir $clipName
 
-    & $ffmpeg -hide_banner -loglevel error -y `
-        -ss (Format-FfmpegSeconds $start) `
-        -i $InputVideo `
-        -t (Format-FfmpegSeconds $duration) `
-        -c:v libx264 -preset veryfast -crf 20 `
-        -c:a aac -b:a 160k `
-        -movflags +faststart `
+    $cutArgs = @(
+        "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", (Format-FfmpegSeconds $start),
+        "-i", $InputVideo,
+        "-t", (Format-FfmpegSeconds $duration)
+    ) + $videoArgs + $audioArgs + @(
+        "-movflags", "+faststart",
         $clipPath
+    )
+
+    & $ffmpeg @cutArgs
 
     if ($LASTEXITCODE -ne 0) {
         throw "Cutting clip $($i + 1) failed with exit code $LASTEXITCODE."
@@ -147,8 +194,7 @@ Write-Host "Joining clips..."
 & $ffmpeg -hide_banner -loglevel error -y `
     -f concat -safe 0 `
     -i $concatPath `
-    -c:v libx264 -preset veryfast -crf 20 `
-    -c:a aac -b:a 160k `
+    -c copy `
     -movflags +faststart `
     $FinalVideo
 

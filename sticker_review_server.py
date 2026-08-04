@@ -73,6 +73,13 @@ def parse_time_to_seconds(text: str) -> float:
     return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) + int(parts[3]) / 1000.0
 
 
+def parse_score_to_dbfs(text: str) -> float:
+    import re
+
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text or "")
+    return float(match.group(0)) if match else 0.0
+
+
 def rel_url(path: Path) -> str:
     rel = path.resolve().relative_to(APP_DIR)
     return "/file/" + urllib.parse.quote(rel.as_posix())
@@ -143,8 +150,12 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
         index = int(row["index"])
         start = parse_time_to_seconds(row["start"])
         duration = float(row["duration"])
+        peak_dbfs = parse_score_to_dbfs(row.get("score", ""))
         clip = clips_dir / f"segment_{index:03d}.mp4"
         thumb = thumbs_dir / f"segment_{index:03d}.jpg"
+        audio_args = ["-c:a", "aac", "-b:a", "160k"]
+        if peak_dbfs < -4.0:
+            audio_args = ["-af", "volume=20dB", "-c:a", "aac", "-b:a", "160k"]
         run(
             [
                 str(ffmpeg),
@@ -158,15 +169,17 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
                 str(input_video),
                 "-t",
                 f"{duration:.3f}",
-                "-vf",
-                "scale=540:-2",
                 "-c:v",
-                "libx264",
+                "h264_nvenc",
                 "-preset",
-                "veryfast",
-                "-crf",
-                "24",
-                "-an",
+                "p5",
+                "-cq:v",
+                "16",
+                "-b:v",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+                *audio_args,
                 "-movflags",
                 "+faststart",
                 str(clip),
@@ -302,12 +315,8 @@ def export_worker(payload: dict[str, object]) -> None:
                 "0",
                 "-i",
                 str(concat_path),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "20",
+                "-c",
+                "copy",
                 "-movflags",
                 "+faststart",
                 str(final_video),

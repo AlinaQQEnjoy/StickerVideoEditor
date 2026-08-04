@@ -254,7 +254,7 @@ def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
             "-show_entries",
             "stream=width,height",
             "-of",
-            "csv=s=x:p=0",
+            "json",
             str(input_video),
         ],
         stdout=subprocess.PIPE,
@@ -266,9 +266,11 @@ def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "Could not read source video dimensions.")
-    size_text = result.stdout.strip().splitlines()[0]
-    width_text, height_text = size_text.split("x", 1)
-    return int(width_text), int(height_text)
+    data = json.loads(result.stdout)
+    streams = data.get("streams") or []
+    if not streams:
+        raise RuntimeError("Could not read source video dimensions.")
+    return int(streams[0]["width"]), int(streams[0]["height"])
 
 
 def four_k_scale_args(input_video: Path, ffmpeg: Path) -> list[str]:
@@ -404,6 +406,8 @@ def read_segments(out_dir: Path) -> list[dict[str, object]]:
         for row in csv.DictReader(f):
             index = int(row["index"])
             clip = find_segment_clip(out_dir, index)
+            if not clip.exists():
+                continue
             thumb = find_segment_thumb(out_dir, index)
             items.append(
                 asdict(

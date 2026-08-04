@@ -37,6 +37,13 @@ function updateCounts() {
   $("nextPageBtn").disabled = state.busy || state.page >= pageCount();
 }
 
+function updateProgress(data) {
+  const percent = Math.max(0, Math.min(100, Number(data.progressPercent || 0)));
+  $("progressFill").style.width = `${percent}%`;
+  $("progressPercent").textContent = `${Math.round(percent)}%`;
+  $("progressText").textContent = data.progressText || (data.busy ? "\u5904\u7406\u4e2d..." : "\u7b49\u5f85\u64cd\u4f5c");
+}
+
 function configureAudio(video) {
   video.muted = false;
   video.defaultMuted = false;
@@ -117,6 +124,7 @@ async function refreshState() {
   $("statusText").textContent = data.error ? `${data.message} ${data.error}` : data.message;
   $("finalPathText").textContent = data.finalVideo ? `\u5bfc\u51fa\u8def\u5f84: ${data.finalVideo}` : "";
   $("outputText").textContent = data.finalVideo ? `\u6210\u54c1: ${data.finalVideo}` : `\u8f93\u51fa\u76ee\u5f55: ${data.outputDir || ""}`;
+  updateProgress(data);
   setBusy(Boolean(data.busy));
 
   const incoming = data.segments || [];
@@ -144,6 +152,7 @@ async function analyze() {
   state.page = 1;
   renderGrid();
   $("statusText").textContent = "Starting audio peak analysis...";
+  updateProgress({ progressPercent: 1, progressText: "Starting audio peak analysis..." });
   await postJson("/api/analyze", payload);
   await refreshState();
 }
@@ -151,6 +160,7 @@ async function analyze() {
 async function exportSelected() {
   const selected = selectedIds();
   $("statusText").textContent = "Starting export...";
+  updateProgress({ progressPercent: 1, progressText: "Starting export..." });
   await postJson("/api/export", { selected });
   await refreshState();
 }

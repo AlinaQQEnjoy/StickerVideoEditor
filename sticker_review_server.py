@@ -33,6 +33,8 @@ STATE: dict[str, object] = {
     "segments": [],
     "finalVideo": "",
     "error": "",
+    "progressPercent": 0,
+    "progressText": "",
 }
 
 
@@ -175,7 +177,8 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
 
     with (out_dir / "segments.csv").open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
-    for row in rows:
+    total = max(1, len(rows))
+    for row_number, row in enumerate(rows, start=1):
         index = int(row["index"])
         start = parse_time_to_seconds(row["start"])
         duration = float(row["duration"])
@@ -234,6 +237,12 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
                 str(thumb),
             ]
         )
+        percent = 20 + round((row_number / total) * 75)
+        set_state(
+            progressPercent=min(95, percent),
+            progressText=f"Building preview clips {row_number}/{total}",
+            message=f"Building preview clips {row_number}/{total}...",
+        )
 
 
 def analyze_worker(payload: dict[str, object]) -> None:
@@ -251,7 +260,15 @@ def analyze_worker(payload: dict[str, object]) -> None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         out_dir = WORK_DIR / timestamp
         out_dir.mkdir(parents=True, exist_ok=True)
-        set_state(busy=True, message="Detecting audio peaks...", inputVideo=str(input_video), outputDir=str(out_dir), error="")
+        set_state(
+            busy=True,
+            message="Detecting audio peaks...",
+            inputVideo=str(input_video),
+            outputDir=str(out_dir),
+            error="",
+            progressPercent=5,
+            progressText="Detecting audio peaks",
+        )
 
         detector = APP_DIR / "audio_peak_detector.py"
         cmd = [
@@ -278,12 +295,19 @@ def analyze_worker(payload: dict[str, object]) -> None:
         ]
         run(cmd)
 
-        set_state(message="Building preview clips...")
+        set_state(message="Building preview clips...", progressPercent=20, progressText="Building preview clips")
         build_previews(input_video, out_dir, ffmpeg)
         segments = read_segments(out_dir)
-        set_state(busy=False, message=f"Detected {len(segments)} preview segments.", segments=segments, outputDir=str(out_dir))
+        set_state(
+            busy=False,
+            message=f"Detected {len(segments)} preview segments.",
+            segments=segments,
+            outputDir=str(out_dir),
+            progressPercent=100,
+            progressText="Analysis complete",
+        )
     except Exception as exc:
-        set_state(busy=False, message="Analyze failed.", error=str(exc))
+        set_state(busy=False, message="Analyze failed.", error=str(exc), progressPercent=0, progressText="Analyze failed")
 
 
 def load_output(payload: dict[str, object]) -> dict[str, object]:
@@ -305,6 +329,8 @@ def load_output(payload: dict[str, object]) -> dict[str, object]:
         segments=segments,
         finalVideo=final_video,
         error="",
+        progressPercent=100 if segments else 0,
+        progressText="Loaded output" if segments else "",
     )
     return {"ok": True, "segments": len(segments)}
 
@@ -322,15 +348,27 @@ def export_worker(payload: dict[str, object]) -> None:
             final_video = out_dir / final_video
         final_video.parent.mkdir(parents=True, exist_ok=True)
 
-        set_state(busy=True, message="Exporting selected clips...", error="")
+        set_state(
+            busy=True,
+            message="Exporting selected clips...",
+            error="",
+            progressPercent=15,
+            progressText=f"Preparing {len(selected)} selected clips",
+        )
         concat_path = out_dir / "selected_concat.txt"
         lines: list[str] = []
-        for index in selected:
+        total = max(1, len(selected))
+        for row_number, index in enumerate(selected, start=1):
             clip = find_segment_clip(out_dir, index).resolve()
             if clip.exists():
                 safe = str(clip).replace("\\", "/").replace("'", "'\\''")
                 lines.append(f"file '{safe}'")
+            set_state(
+                progressPercent=15 + round((row_number / total) * 35),
+                progressText=f"Preparing selected clips {row_number}/{total}",
+            )
         concat_path.write_text("\n".join(lines), encoding="utf-8")
+        set_state(message="Joining selected clips...", progressPercent=60, progressText="Joining selected clips")
         run(
             [
                 str(ffmpeg),
@@ -351,9 +389,15 @@ def export_worker(payload: dict[str, object]) -> None:
                 str(final_video),
             ]
         )
-        set_state(busy=False, message="Export complete.", finalVideo=str(final_video))
+        set_state(
+            busy=False,
+            message="Export complete.",
+            finalVideo=str(final_video),
+            progressPercent=100,
+            progressText="Export complete",
+        )
     except Exception as exc:
-        set_state(busy=False, message="Export failed.", error=str(exc))
+        set_state(busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed")
 
 
 class Handler(BaseHTTPRequestHandler):

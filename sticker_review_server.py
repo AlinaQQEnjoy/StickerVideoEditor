@@ -400,6 +400,42 @@ def export_worker(payload: dict[str, object]) -> None:
         set_state(busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed")
 
 
+def clear_clips(payload: dict[str, object]) -> dict[str, object]:
+    state = get_state()
+    out_dir = Path(str(payload.get("outputDir") or state.get("outputDir") or "")).resolve()
+    clips_dir = (out_dir / "clips").resolve()
+    app_root = APP_DIR.resolve()
+    if not str(clips_dir).lower().startswith(str(app_root).lower()):
+        raise RuntimeError(f"Refusing to clear clips outside project folder: {clips_dir}")
+    if clips_dir.name.lower() != "clips":
+        raise RuntimeError(f"Refusing to clear unexpected folder: {clips_dir}")
+    if not clips_dir.exists():
+        return {"ok": True, "deleted": 0, "bytes": 0}
+
+    patterns = ["clip_*.mp4", "segment_*.mp4"]
+    targets: list[Path] = []
+    for pattern in patterns:
+        targets.extend(clips_dir.glob(pattern))
+
+    deleted = 0
+    deleted_bytes = 0
+    for target in targets:
+        if not target.is_file():
+            continue
+        deleted_bytes += target.stat().st_size
+        target.unlink()
+        deleted += 1
+
+    set_state(
+        message=f"Cleared {deleted} cached clips.",
+        segments=[],
+        progressPercent=0,
+        progressText="Cached clips cleared",
+        error="",
+    )
+    return {"ok": True, "deleted": deleted, "bytes": deleted_bytes}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -470,6 +506,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "path": pick_video_file()})
             except Exception as exc:
                 self.send_json({"ok": False, "error": str(exc)}, 500)
+            return
+        if parsed.path == "/api/clear-clips":
+            try:
+                self.send_json(clear_clips(payload))
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
             return
         if parsed.path == "/api/load-output":
             try:

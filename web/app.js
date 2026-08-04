@@ -24,6 +24,7 @@ function setBusy(isBusy) {
   state.busy = isBusy;
   $("analyzeBtn").disabled = isBusy;
   $("exportBtn").disabled = isBusy || selectedIds().length === 0;
+  $("clearClipsBtn").disabled = isBusy;
   $("prevPageBtn").disabled = isBusy || state.page <= 1;
   $("nextPageBtn").disabled = isBusy || state.page >= pageCount();
 }
@@ -176,6 +177,21 @@ async function pickVideo() {
   }
 }
 
+async function clearCachedClips() {
+  const confirmed = window.confirm("\u786e\u5b9a\u8981\u5220\u9664 clips \u91cc\u7684\u6682\u5b58\u7247\u6bb5\u5417\uff1f\u5df2\u5bfc\u51fa\u7684\u6210\u54c1\u89c6\u9891\u4e0d\u4f1a\u88ab\u5220\u9664\u3002");
+  if (!confirmed) {
+    return;
+  }
+  $("statusText").textContent = "\u6b63\u5728\u6e05\u7a7a\u6682\u5b58\u7247\u6bb5...";
+  const data = await postJson("/api/clear-clips", {});
+  state.segments = [];
+  state.page = 1;
+  renderGrid();
+  const mb = (Number(data.bytes || 0) / 1024 / 1024).toFixed(1);
+  $("statusText").textContent = `\u5df2\u6e05\u7a7a ${data.deleted || 0} \u4e2a\u6682\u5b58\u7247\u6bb5\uff0c\u91ca\u653e\u7ea6 ${mb} MB\u3002`;
+  await refreshState();
+}
+
 $("analyzeBtn").addEventListener("click", () => analyze().catch((err) => {
   $("statusText").textContent = err.message;
 }));
@@ -185,6 +201,10 @@ $("exportBtn").addEventListener("click", () => exportSelected().catch((err) => {
 }));
 
 $("pickVideoBtn").addEventListener("click", () => pickVideo().catch((err) => {
+  $("statusText").textContent = err.message;
+}));
+
+$("clearClipsBtn").addEventListener("click", () => clearCachedClips().catch((err) => {
   $("statusText").textContent = err.message;
 }));
 

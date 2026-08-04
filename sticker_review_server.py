@@ -23,12 +23,11 @@ DEFAULT_FFMPEG = Path(r"D:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe")
 DEFAULT_PYTHON = Path(r"C:\Users\ASUS\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe")
 FINAL_OUTPUT_ROOT = Path(r"D:\MellowScape") / "\u526a\u8f91\u540e\u89c6\u9891"
 WORK_DIR = APP_DIR / "review_output"
+PROCESS_ROOT = APP_DIR / "review_processes"
 STATIC_DIR = APP_DIR / "web"
 STATE_LOCK = threading.Lock()
-CANCEL_EVENT = threading.Event()
-PROCESS_LOCK = threading.Lock()
-CURRENT_PROCESS: subprocess.Popen[str] | None = None
-CURRENT_TASK_OUTPUT: Path | None = None
+TASKS_LOCK = threading.Lock()
+TASKS: dict[str, dict[str, object]] = {}
 STATE: dict[str, object] = {
     "busy": False,
     "message": "Ready.",
@@ -40,6 +39,8 @@ STATE: dict[str, object] = {
     "progressPercent": 0,
     "progressText": "",
     "canCancel": False,
+    "activeProcessId": "",
+    "processes": [],
 }
 
 
@@ -65,6 +66,30 @@ class SegmentItem:
 def set_state(**updates: object) -> None:
     with STATE_LOCK:
         STATE.update(updates)
+        active_id = str(STATE.get("activeProcessId") or "")
+        for process in STATE.get("processes", []):
+            if process.get("id") == active_id:
+                for key in ("inputVideo", "outputDir", "finalVideo", "message", "progressPercent", "progressText", "canCancel"):
+                    if key in updates:
+                        process[key] = updates[key]
+                if "segments" in updates:
+                    process["segmentCount"] = len(updates["segments"]) if isinstance(updates["segments"], list) else 0
+                break
+
+
+def set_process_state(process_id: str, **updates: object) -> None:
+    with STATE_LOCK:
+        active_id = str(STATE.get("activeProcessId") or "")
+        for process in STATE.get("processes", []):
+            if process.get("id") == process_id:
+                process.update(updates)
+                if "segments" in updates:
+                    process["segmentCount"] = len(updates["segments"]) if isinstance(updates["segments"], list) else 0
+                break
+        if active_id == process_id:
+            STATE.update(updates)
+            if "segments" in updates and isinstance(updates["segments"], list):
+                STATE["segments"] = updates["segments"]
 
 
 def get_state() -> dict[str, object]:
@@ -72,15 +97,125 @@ def get_state() -> dict[str, object]:
         return json.loads(json.dumps(STATE))
 
 
-def run(cmd: list[str]) -> None:
-    global CURRENT_PROCESS
+def process_label(index: int) -> str:
+    return f"Process {index}"
+
+
+def create_process_record(name: str | None = None) -> dict[str, object]:
+    PROCESS_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    existing = STATE.get("processes", [])
+    process_id = f"process_{stamp}_{len(existing) + 1:02d}"
+    out_dir = PROCESS_ROOT / process_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "id": process_id,
+        "name": name or process_label(len(existing) + 1),
+        "outputDir": str(out_dir),
+        "inputVideo": "",
+        "finalVideo": "",
+        "message": "Ready.",
+        "progressPercent": 0,
+        "progressText": "",
+        "canCancel": False,
+        "busy": False,
+        "segmentCount": 0,
+    }
+
+
+def ensure_processes() -> None:
+    with STATE_LOCK:
+        if STATE.get("processes"):
+            return
+        existing_dirs = sorted(path for path in PROCESS_ROOT.glob("process_*") if path.is_dir())
+        if existing_dirs:
+            processes: list[dict[str, object]] = []
+            for index, out_dir in enumerate(existing_dirs, start=1):
+                segment_count = len(read_segments(out_dir))
+                processes.append(
+                    {
+                        "id": out_dir.name,
+                        "name": process_label(index),
+                        "outputDir": str(out_dir),
+                        "inputVideo": "",
+                        "finalVideo": "",
+                        "message": "Ready.",
+                        "progressPercent": 100 if segment_count else 0,
+                        "progressText": "Loaded output" if segment_count else "",
+                        "canCancel": False,
+                        "busy": False,
+                        "segmentCount": segment_count,
+                    }
+                )
+            STATE["processes"] = processes
+            STATE["activeProcessId"] = processes[0]["id"]
+            STATE["outputDir"] = processes[0]["outputDir"]
+            STATE["segments"] = read_segments(Path(str(processes[0]["outputDir"])))
+            return
+        process = create_process_record("Process 1")
+        STATE["processes"] = [process]
+        STATE["activeProcessId"] = process["id"]
+        STATE["outputDir"] = process["outputDir"]
+
+
+def active_process() -> dict[str, object]:
+    ensure_processes()
+    with STATE_LOCK:
+        active_id = str(STATE.get("activeProcessId") or "")
+        for process in STATE.get("processes", []):
+            if process.get("id") == active_id:
+                return json.loads(json.dumps(process))
+        process = STATE["processes"][0]
+        STATE["activeProcessId"] = process["id"]
+        return json.loads(json.dumps(process))
+
+
+def activate_process(process_id: str) -> dict[str, object]:
+    ensure_processes()
+    with STATE_LOCK:
+        processes = STATE.get("processes", [])
+        target = next((item for item in processes if item.get("id") == process_id), None)
+        if target is None:
+            raise RuntimeError(f"Process not found: {process_id}")
+        out_dir = Path(str(target["outputDir"]))
+        segments = read_segments(out_dir)
+        STATE.update(
+            activeProcessId=process_id,
+            busy=target.get("busy", False),
+            inputVideo=target.get("inputVideo", ""),
+            outputDir=str(out_dir),
+            finalVideo=target.get("finalVideo", ""),
+            message=target.get("message", "Ready."),
+            segments=segments,
+            progressPercent=target.get("progressPercent", 0),
+            progressText=target.get("progressText", ""),
+            canCancel=False,
+            error="",
+        )
+        STATE["canCancel"] = target.get("canCancel", False)
+        target["segmentCount"] = len(segments)
+    return get_state()
+
+
+def add_process() -> dict[str, object]:
+    ensure_processes()
+    with STATE_LOCK:
+        process = create_process_record()
+        STATE["processes"].append(process)
+    return activate_process(str(process["id"]))
+
+
+def run(cmd: list[str], process_id: str) -> None:
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    with PROCESS_LOCK:
-        CURRENT_PROCESS = proc
+    with TASKS_LOCK:
+        task = TASKS.setdefault(process_id, {"cancel": threading.Event(), "process": None, "outputDir": None})
+        task["process"] = proc
     output_parts: list[str] = []
     try:
         while proc.poll() is None:
-            if CANCEL_EVENT.is_set():
+            with TASKS_LOCK:
+                cancel_event = TASKS.get(process_id, {}).get("cancel")
+            if isinstance(cancel_event, threading.Event) and cancel_event.is_set():
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -92,9 +227,9 @@ def run(cmd: list[str]) -> None:
         if proc.stdout is not None:
             output_parts.append(proc.stdout.read())
     finally:
-        with PROCESS_LOCK:
-            if CURRENT_PROCESS is proc:
-                CURRENT_PROCESS = None
+        with TASKS_LOCK:
+            if TASKS.get(process_id, {}).get("process") is proc:
+                TASKS[process_id]["process"] = None
         if proc.stdout is not None:
             proc.stdout.close()
     if proc.returncode != 0:
@@ -112,16 +247,20 @@ def cleanup_task_output(path: Path | None) -> None:
         shutil.rmtree(target, ignore_errors=True)
 
 
-def request_cancel() -> dict[str, object]:
-    if not get_state().get("busy"):
-        CANCEL_EVENT.clear()
+def request_cancel(process_id: str | None = None) -> dict[str, object]:
+    target_id = process_id or str(active_process()["id"])
+    with TASKS_LOCK:
+        task = TASKS.get(target_id)
+    if not task:
         return {"ok": True, "cancelled": False, "message": "No running task."}
-    CANCEL_EVENT.set()
-    with PROCESS_LOCK:
-        proc = CURRENT_PROCESS
+    cancel_event = task.get("cancel")
+    if isinstance(cancel_event, threading.Event):
+        cancel_event.set()
+    proc = task.get("process")
+    if isinstance(proc, subprocess.Popen):
         if proc is not None and proc.poll() is None:
             proc.terminate()
-    set_state(message="Cancelling current task...", progressText="Cancelling", canCancel=False)
+    set_process_state(target_id, message="Cancelling current task...", progressText="Cancelling", canCancel=False)
     return {"ok": True}
 
 
@@ -223,7 +362,13 @@ def read_segments(out_dir: Path) -> list[dict[str, object]]:
     return items
 
 
-def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
+def process_cancelled(process_id: str) -> bool:
+    with TASKS_LOCK:
+        cancel_event = TASKS.get(process_id, {}).get("cancel")
+    return isinstance(cancel_event, threading.Event) and cancel_event.is_set()
+
+
+def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path, process_id: str) -> None:
     clips_dir = out_dir / "clips"
     thumbs_dir = out_dir / "thumbs"
     clips_dir.mkdir(parents=True, exist_ok=True)
@@ -235,7 +380,7 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
         rows = list(csv.DictReader(f))
     total = max(1, len(rows))
     for row_number, row in enumerate(rows, start=1):
-        if CANCEL_EVENT.is_set():
+        if process_cancelled(process_id):
             raise CancelledError("Task was cancelled.")
         index = int(row["index"])
         start = parse_time_to_seconds(row["start"])
@@ -273,7 +418,8 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
                 "-movflags",
                 "+faststart",
                 str(clip),
-            ]
+            ],
+            process_id,
         )
         run(
             [
@@ -293,10 +439,12 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
                 "-q:v",
                 "3",
                 str(thumb),
-            ]
+            ],
+            process_id,
         )
         percent = 20 + round((row_number / total) * 75)
-        set_state(
+        set_process_state(
+            process_id,
             progressPercent=min(95, percent),
             progressText=f"Building preview clips {row_number}/{total}",
             message=f"Building preview clips {row_number}/{total}...",
@@ -304,9 +452,13 @@ def build_previews(input_video: Path, out_dir: Path, ffmpeg: Path) -> None:
 
 
 def analyze_worker(payload: dict[str, object]) -> None:
-    global CURRENT_TASK_OUTPUT
     try:
-        CANCEL_EVENT.clear()
+        process_id = str(payload.get("processId") or active_process()["id"])
+        process = active_process() if process_id == str(active_process()["id"]) else next(
+            item for item in get_state().get("processes", []) if item.get("id") == process_id
+        )
+        with TASKS_LOCK:
+            TASKS[process_id] = {"cancel": threading.Event(), "process": None, "outputDir": process["outputDir"]}
         input_video = Path(str(payload.get("inputVideo", "")).strip().strip('"'))
         if not input_video.exists():
             raise RuntimeError(f"Input video not found: {input_video}")
@@ -317,11 +469,10 @@ def analyze_worker(payload: dict[str, object]) -> None:
         if not python.exists():
             raise RuntimeError(f"Python not found: {python}")
 
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        out_dir = WORK_DIR / timestamp
+        out_dir = Path(str(process["outputDir"]))
         out_dir.mkdir(parents=True, exist_ok=True)
-        CURRENT_TASK_OUTPUT = out_dir
-        set_state(
+        set_process_state(
+            process_id,
             busy=True,
             message="Detecting audio peaks...",
             inputVideo=str(input_video),
@@ -355,12 +506,13 @@ def analyze_worker(payload: dict[str, object]) -> None:
             "--max-peaks",
             str(payload.get("maxPeaks") or 300),
         ]
-        run(cmd)
+        run(cmd, process_id)
 
-        set_state(message="Building preview clips...", progressPercent=20, progressText="Building preview clips")
-        build_previews(input_video, out_dir, ffmpeg)
+        set_process_state(process_id, message="Building preview clips...", progressPercent=20, progressText="Building preview clips")
+        build_previews(input_video, out_dir, ffmpeg, process_id)
         segments = read_segments(out_dir)
-        set_state(
+        set_process_state(
+            process_id,
             busy=False,
             message=f"Detected {len(segments)} preview segments.",
             segments=segments,
@@ -369,12 +521,14 @@ def analyze_worker(payload: dict[str, object]) -> None:
             progressText="Analysis complete",
             canCancel=False,
         )
-        CURRENT_TASK_OUTPUT = None
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
     except CancelledError:
-        cleanup_task_output(CURRENT_TASK_OUTPUT)
-        CURRENT_TASK_OUTPUT = None
-        CANCEL_EVENT.clear()
-        set_state(
+        cleanup_task_output(Path(str(process.get("outputDir"))))
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
+        set_process_state(
+            process_id,
             busy=False,
             message="Recognition stopped. Temporary clips were deleted.",
             segments=[],
@@ -384,12 +538,13 @@ def analyze_worker(payload: dict[str, object]) -> None:
             canCancel=False,
         )
     except Exception as exc:
-        CURRENT_TASK_OUTPUT = None
-        CANCEL_EVENT.clear()
-        set_state(busy=False, message="Analyze failed.", error=str(exc), progressPercent=0, progressText="Analyze failed", canCancel=False)
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
+        set_process_state(process_id, busy=False, message="Analyze failed.", error=str(exc), progressPercent=0, progressText="Analyze failed", canCancel=False)
 
 
 def load_output(payload: dict[str, object]) -> dict[str, object]:
+    ensure_processes()
     out_dir = Path(str(payload.get("outputDir", "")).strip().strip('"'))
     if not out_dir.exists():
         raise RuntimeError(f"Output folder not found: {out_dir}")
@@ -400,6 +555,20 @@ def load_output(payload: dict[str, object]) -> dict[str, object]:
     input_video = str(payload.get("inputVideo") or "")
     final_video = str(payload.get("finalVideo") or "")
     segments = read_segments(out_dir)
+    active_id = active_process()["id"]
+    with STATE_LOCK:
+        for process in STATE.get("processes", []):
+            if process.get("id") == active_id:
+                process.update(
+                    inputVideo=input_video,
+                    outputDir=str(out_dir),
+                    finalVideo=final_video,
+                    segmentCount=len(segments),
+                    message=f"Loaded {len(segments)} clips from PowerShell run.",
+                    progressPercent=100 if segments else 0,
+                    progressText="Loaded output" if segments else "",
+                )
+                break
     set_state(
         busy=False,
         message=f"Loaded {len(segments)} clips from PowerShell run.",
@@ -416,9 +585,13 @@ def load_output(payload: dict[str, object]) -> dict[str, object]:
 
 def export_worker(payload: dict[str, object]) -> None:
     try:
-        CANCEL_EVENT.clear()
-        state = get_state()
-        out_dir = Path(str(state["outputDir"]))
+        process_id = str(payload.get("processId") or active_process()["id"])
+        process = active_process() if process_id == str(active_process()["id"]) else next(
+            item for item in get_state().get("processes", []) if item.get("id") == process_id
+        )
+        with TASKS_LOCK:
+            TASKS[process_id] = {"cancel": threading.Event(), "process": None, "outputDir": process["outputDir"]}
+        out_dir = Path(str(process["outputDir"]))
         ffmpeg = Path(str(payload.get("ffmpeg") or DEFAULT_FFMPEG))
         selected = [int(x) for x in payload.get("selected", [])]
         if not selected:
@@ -428,7 +601,8 @@ def export_worker(payload: dict[str, object]) -> None:
             final_video = out_dir / final_video
         final_video.parent.mkdir(parents=True, exist_ok=True)
 
-        set_state(
+        set_process_state(
+            process_id,
             busy=True,
             message="Exporting selected clips...",
             error="",
@@ -444,12 +618,15 @@ def export_worker(payload: dict[str, object]) -> None:
             if clip.exists():
                 safe = str(clip).replace("\\", "/").replace("'", "'\\''")
                 lines.append(f"file '{safe}'")
-            set_state(
+            if process_cancelled(process_id):
+                raise CancelledError("Task was cancelled.")
+            set_process_state(
+                process_id,
                 progressPercent=15 + round((row_number / total) * 35),
                 progressText=f"Preparing selected clips {row_number}/{total}",
             )
         concat_path.write_text("\n".join(lines), encoding="utf-8")
-        set_state(message="Joining selected clips...", progressPercent=60, progressText="Joining selected clips")
+        set_process_state(process_id, message="Joining selected clips...", progressPercent=60, progressText="Joining selected clips")
         run(
             [
                 str(ffmpeg),
@@ -468,9 +645,11 @@ def export_worker(payload: dict[str, object]) -> None:
                 "-movflags",
                 "+faststart",
                 str(final_video),
-            ]
+            ],
+            process_id,
         )
-        set_state(
+        set_process_state(
+            process_id,
             busy=False,
             message="Export complete.",
             finalVideo=str(final_video),
@@ -478,9 +657,13 @@ def export_worker(payload: dict[str, object]) -> None:
             progressText="Export complete",
             canCancel=False,
         )
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
     except CancelledError:
-        CANCEL_EVENT.clear()
-        set_state(
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
+        set_process_state(
+            process_id,
             busy=False,
             message="Export stopped.",
             error="",
@@ -489,41 +672,41 @@ def export_worker(payload: dict[str, object]) -> None:
             canCancel=False,
         )
     except Exception as exc:
-        CANCEL_EVENT.clear()
-        set_state(busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed", canCancel=False)
+        with TASKS_LOCK:
+            TASKS.pop(process_id, None)
+        set_process_state(process_id, busy=False, message="Export failed.", error=str(exc), progressPercent=0, progressText="Export failed", canCancel=False)
 
 
 def clear_clips(payload: dict[str, object]) -> dict[str, object]:
-    state = get_state()
-    out_dir = Path(str(payload.get("outputDir") or state.get("outputDir") or "")).resolve()
-    clips_dir = (out_dir / "clips").resolve()
+    process_id = str(payload.get("processId") or active_process()["id"])
+    process = active_process() if process_id == str(active_process()["id"]) else next(
+        item for item in get_state().get("processes", []) if item.get("id") == process_id
+    )
+    if process.get("busy"):
+        raise RuntimeError("Stop this process before clearing its temporary folder.")
+    out_dir = Path(str(process.get("outputDir") or "")).resolve()
     app_root = APP_DIR.resolve()
-    if not str(clips_dir).lower().startswith(str(app_root).lower()):
-        raise RuntimeError(f"Refusing to clear clips outside project folder: {clips_dir}")
-    if clips_dir.name.lower() != "clips":
-        raise RuntimeError(f"Refusing to clear unexpected folder: {clips_dir}")
-    if not clips_dir.exists():
-        return {"ok": True, "deleted": 0, "bytes": 0}
-
-    patterns = ["clip_*.mp4", "segment_*.mp4"]
-    targets: list[Path] = []
-    for pattern in patterns:
-        targets.extend(clips_dir.glob(pattern))
+    if not str(out_dir).lower().startswith(str(app_root).lower()):
+        raise RuntimeError(f"Refusing to clear process folder outside project folder: {out_dir}")
+    if out_dir == app_root or out_dir.parent == app_root:
+        raise RuntimeError(f"Refusing to clear unsafe folder: {out_dir}")
 
     deleted = 0
     deleted_bytes = 0
-    for target in targets:
-        if not target.is_file():
-            continue
-        deleted_bytes += target.stat().st_size
-        target.unlink()
-        deleted += 1
+    if out_dir.exists():
+        for target in out_dir.rglob("*"):
+            if target.is_file():
+                deleted += 1
+                deleted_bytes += target.stat().st_size
+        shutil.rmtree(out_dir, ignore_errors=True)
 
-    set_state(
-        message=f"Cleared {deleted} cached clips.",
+    set_process_state(
+        process_id,
+        message=f"Deleted current process cache folder with {deleted} files.",
         segments=[],
+        outputDir=str(out_dir),
         progressPercent=0,
-        progressText="Cached clips cleared",
+        progressText="Process cache folder deleted",
         error="",
     )
     return {"ok": True, "deleted": deleted, "bytes": deleted_bytes}
@@ -582,18 +765,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/api/cancel":
-            self.send_json(request_cancel())
-            return
-        if get_state().get("busy"):
-            self.send_json({"ok": False, "error": "Server is busy."}, 409)
-            return
         payload = self.read_json()
+        if parsed.path == "/api/cancel":
+            self.send_json(request_cancel(str(payload.get("processId") or active_process()["id"])))
+            return
+        if parsed.path == "/api/add-process":
+            try:
+                self.send_json({"ok": True, "state": add_process()})
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/select-process":
+            try:
+                self.send_json({"ok": True, "state": activate_process(str(payload.get("processId") or ""))})
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if parsed.path == "/api/analyze":
+            process_id = str(payload.get("processId") or active_process()["id"])
+            process = next((item for item in get_state().get("processes", []) if item.get("id") == process_id), None)
+            if process and process.get("busy"):
+                self.send_json({"ok": False, "error": "This process is already running."}, 409)
+                return
             threading.Thread(target=analyze_worker, args=(payload,), daemon=True).start()
             self.send_json({"ok": True})
             return
         if parsed.path == "/api/export":
+            process_id = str(payload.get("processId") or active_process()["id"])
+            process = next((item for item in get_state().get("processes", []) if item.get("id") == process_id), None)
+            if process and process.get("busy"):
+                self.send_json({"ok": False, "error": "This process is already running."}, 409)
+                return
             threading.Thread(target=export_worker, args=(payload,), daemon=True).start()
             self.send_json({"ok": True})
             return
@@ -621,6 +823,8 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     port = int(os.environ.get("STICKER_REVIEW_PORT", "8787"))
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESS_ROOT.mkdir(parents=True, exist_ok=True)
+    ensure_processes()
     if not STATIC_DIR.exists():
         raise SystemExit(f"Missing static folder: {STATIC_DIR}")
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)

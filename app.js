@@ -155,11 +155,26 @@ async function exportSelected() {
   await refreshState();
 }
 
+async function pickVideo() {
+  $("statusText").textContent = "\u8bf7\u5728\u5f39\u51fa\u7a97\u53e3\u4e2d\u9009\u62e9\u539f\u89c6\u9891...";
+  const data = await postJson("/api/pick-video", {});
+  if (data.path) {
+    $("inputVideo").value = data.path;
+    $("statusText").textContent = "\u5df2\u9009\u62e9\u539f\u89c6\u9891\u3002";
+  } else {
+    $("statusText").textContent = "\u5df2\u53d6\u6d88\u9009\u62e9\u3002";
+  }
+}
+
 $("analyzeBtn").addEventListener("click", () => analyze().catch((err) => {
   $("statusText").textContent = err.message;
 }));
 
 $("exportBtn").addEventListener("click", () => exportSelected().catch((err) => {
+  $("statusText").textContent = err.message;
+}));
+
+$("pickVideoBtn").addEventListener("click", () => pickVideo().catch((err) => {
   $("statusText").textContent = err.message;
 }));
 

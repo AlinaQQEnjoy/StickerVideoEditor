@@ -243,7 +243,7 @@ def ffprobe_path(ffmpeg: Path) -> Path:
     return Path("ffprobe")
 
 
-def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
+def source_video_info(input_video: Path, ffmpeg: Path) -> tuple[int, int, int]:
     result = subprocess.run(
         [
             str(ffprobe_path(ffmpeg)),
@@ -252,7 +252,7 @@ def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height",
+            "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
             "-of",
             "json",
             str(input_video),
@@ -270,13 +270,22 @@ def source_video_size(input_video: Path, ffmpeg: Path) -> tuple[int, int]:
     streams = data.get("streams") or []
     if not streams:
         raise RuntimeError("Could not read source video dimensions.")
-    return int(streams[0]["width"]), int(streams[0]["height"])
+    stream = streams[0]
+    rotation = 0
+    for side_data in stream.get("side_data_list") or []:
+        if "rotation" in side_data:
+            rotation = int(float(side_data["rotation"]))
+            break
+    if not rotation:
+        rotation = int(float((stream.get("tags") or {}).get("rotate") or 0))
+    return int(stream["width"]), int(stream["height"]), rotation
 
 
 def four_k_scale_args(input_video: Path, ffmpeg: Path) -> list[str]:
-    width, height = source_video_size(input_video, ffmpeg)
-    target_width, target_height = (2160, 3840) if height >= width else (3840, 2160)
-    if width >= target_width and height >= target_height:
+    width, height, rotation = source_video_info(input_video, ffmpeg)
+    display_width, display_height = (height, width) if abs(rotation) in (90, 270) else (width, height)
+    target_width, target_height = (2160, 3840) if display_height >= display_width else (3840, 2160)
+    if not rotation and display_width >= target_width and display_height >= target_height:
         return []
     return ["-vf", f"scale={target_width}:{target_height}:flags=lanczos"]
 

@@ -102,25 +102,42 @@ function Get-VideoScaleArgs {
     }
 
     $ffprobe = Resolve-FfprobePath -FfmpegPath $FfmpegPath
-    $sizeText = (& $ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 $VideoPath).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sizeText)) {
+    $probeText = (& $ffprobe -v error -select_streams v:0 -show_entries "stream=width,height:stream_tags=rotate:stream_side_data=rotation" -of json $VideoPath)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($probeText)) {
         throw "Could not read source video dimensions."
     }
-    $parts = $sizeText -split "x"
-    $width = [int]$parts[0]
-    $height = [int]$parts[1]
+    $probe = $probeText | ConvertFrom-Json
+    $stream = @($probe.streams)[0]
+    $width = [int]$stream.width
+    $height = [int]$stream.height
+    $rotation = 0
+    foreach ($sideData in @($stream.side_data_list)) {
+        if ($null -ne $sideData.rotation) {
+            $rotation = [int][double]$sideData.rotation
+            break
+        }
+    }
+    if ($rotation -eq 0 -and $null -ne $stream.tags -and $null -ne $stream.tags.rotate) {
+        $rotation = [int][double]$stream.tags.rotate
+    }
+    $displayWidth = $width
+    $displayHeight = $height
+    if ([Math]::Abs($rotation) -eq 90 -or [Math]::Abs($rotation) -eq 270) {
+        $displayWidth = $height
+        $displayHeight = $width
+    }
     $targetWidth = 3840
     $targetHeight = 2160
-    if ($height -ge $width) {
+    if ($displayHeight -ge $displayWidth) {
         $targetWidth = 2160
         $targetHeight = 3840
     }
-    if ($width -ge $targetWidth -and $height -ge $targetHeight) {
-        Write-Host "Source is already 4K or higher: ${width}x${height}"
+    if ($rotation -eq 0 -and $displayWidth -ge $targetWidth -and $displayHeight -ge $targetHeight) {
+        Write-Host "Source is already 4K or higher: ${displayWidth}x${displayHeight}"
         return @()
     }
     $scale = "scale=${targetWidth}:${targetHeight}:flags=lanczos"
-    Write-Host "Upscaling clips to 4K: ${width}x${height} -> ${targetWidth}x${targetHeight}"
+    Write-Host "Normalizing clips to 4K: ${displayWidth}x${displayHeight}, rotation ${rotation} -> ${targetWidth}x${targetHeight}"
     return @("-vf", $scale)
 }
 

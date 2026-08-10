@@ -378,6 +378,7 @@ def send_cache_headers(handler: BaseHTTPRequestHandler) -> None:
         handler.send_header("Vary", "Origin")
         handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+        handler.send_header("Access-Control-Allow-Private-Network", "true")
 
 
 def find_segment_clip(out_dir: Path, index: int) -> Path:
